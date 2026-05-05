@@ -1,0 +1,1069 @@
+
+=== accounts ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  parent_id  |  bigint unsigned  |  NULL
+  code  |  varchar(255)  |  NOT NULL
+  name_en  |  varchar(255)  |  NULL
+  name_ar  |  varchar(255)  |  NULL
+  type  |  enum('asset','liability','equity','revenue','cogs','expense')  |  NOT NULL
+  normal_balance  |  enum('debit','credit')  |  NOT NULL
+  currency  |  varchar(3)  |  NULL DEFAULT 'EGP'
+  is_system  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  allow_direct_posting  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== activity_log ===
+  id  |  bigint unsigned  |  NOT NULL
+  log_name  |  varchar(255)  |  NULL
+  description  |  text  |  NOT NULL
+  subject_type  |  varchar(255)  |  NULL
+  subject_id  |  bigint unsigned  |  NULL
+  event  |  varchar(255)  |  NULL
+  causer_type  |  varchar(255)  |  NULL
+  causer_id  |  bigint unsigned  |  NULL
+  attribute_changes  |  json  |  NULL
+  properties  |  json  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== animal_lot_history ===
+  id  |  bigint unsigned  |  NOT NULL
+  animal_id  |  bigint unsigned  |  NOT NULL
+  lot_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  entered_at  |  date  |  NOT NULL
+  exited_at  |  date  |  NULL
+  exit_reason  |  enum('transferred','sold','slaughtered','dead')  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== animal_receipt_batches ===
+  id  |  bigint unsigned  |  NOT NULL
+  procurement_id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  lot_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  received_head  |  smallint unsigned  |  NOT NULL DEFAULT '0'
+  po_price_per_kg  |  decimal(10,4)  |  NOT NULL
+  po_price_per_head  |  decimal(12,2)  |  NULL
+  freight_allocated  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  subtotal  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  receipt_mode  |  enum('bulk_avg','bulk_range','individual')  |  NOT NULL DEFAULT 'bulk_avg'
+  status  |  enum('draft','confirmed')  |  NOT NULL DEFAULT 'confirmed'
+  inventory_transaction_id  |  bigint unsigned  |  NULL
+  created_by  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== animals ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  lot_id  |  bigint unsigned  |  NULL
+  receipt_batch_id  |  bigint unsigned  |  NULL
+  tag  |  varchar(255)  |  NOT NULL
+  rfid  |  varchar(255)  |  NULL
+  qr_code  |  varchar(255)  |  NULL
+  breed  |  varchar(255)  |  NULL
+  dob  |  date  |  NULL
+  dob_estimated  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  sex  |  enum('male','female','castrated')  |  NOT NULL
+  color  |  varchar(255)  |  NULL
+  markings  |  varchar(255)  |  NULL
+  source  |  enum('purchased','born_on_farm')  |  NOT NULL DEFAULT 'purchased'
+  dam_id  |  bigint unsigned  |  NULL
+  sire_id  |  bigint unsigned  |  NULL
+  purchase_date  |  date  |  NULL
+  supplier_id  |  bigint unsigned  |  NULL
+  purchase_price  |  decimal(12,2)  |  NULL
+  po_price_per_kg  |  decimal(10,4)  |  NULL
+  purchase_weight_kg  |  decimal(8,2)  |  NULL
+  freight_cost  |  decimal(12,2)  |  NULL
+  photo  |  varchar(255)  |  NULL
+  status  |  enum('active','reserved','sold','slaughtered','dead','quarantine','transferred')  |  NOT NULL DEFAULT 'active'
+  status_date  |  date  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== ap_invoices ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  supplier_id  |  bigint unsigned  |  NOT NULL
+  journal_entry_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  due_date  |  date  |  NULL
+  reference  |  varchar(255)  |  NULL
+  description  |  varchar(255)  |  NULL
+  total  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  paid  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  balance  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  currency  |  varchar(3)  |  NOT NULL DEFAULT 'EGP'
+  exchange_rate  |  decimal(15,6)  |  NOT NULL DEFAULT '1.000000'
+  status  |  enum('open','partially_paid','paid','overdue','cancelled')  |  NOT NULL DEFAULT 'open'
+  notes  |  text  |  NULL
+  invoice_type  |  enum('cattle','inventory','other')  |  NOT NULL DEFAULT 'cattle'
+  expense_account_id  |  bigint unsigned  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== ar_invoices ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  customer_id  |  bigint unsigned  |  NOT NULL
+  journal_entry_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  due_date  |  date  |  NULL
+  reference  |  varchar(255)  |  NULL
+  description  |  varchar(255)  |  NULL
+  total  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  paid  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  balance  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  currency  |  varchar(3)  |  NOT NULL DEFAULT 'EGP'
+  exchange_rate  |  decimal(15,6)  |  NOT NULL DEFAULT '1.000000'
+  status  |  enum('open','partially_paid','paid','overdue','cancelled')  |  NOT NULL DEFAULT 'open'
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== asset_depreciation_lines ===
+  id  |  bigint unsigned  |  NOT NULL
+  asset_id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  fiscal_year_id  |  bigint unsigned  |  NOT NULL
+  period_month  |  tinyint unsigned  |  NOT NULL
+  depreciation_date  |  date  |  NOT NULL
+  amount  |  decimal(14,2)  |  NOT NULL
+  accumulated_to_date  |  decimal(14,2)  |  NOT NULL
+  journal_entry_id  |  bigint unsigned  |  NULL
+  is_posted  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  posted_at  |  timestamp  |  NULL
+  posted_by  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== audit_logs ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NULL
+  user_id  |  bigint unsigned  |  NULL
+  action  |  varchar(255)  |  NOT NULL
+  model  |  varchar(255)  |  NULL
+  model_id  |  bigint unsigned  |  NULL
+  old_values  |  json  |  NULL
+  new_values  |  json  |  NULL
+  ip_address  |  varchar(45)  |  NULL
+  user_agent  |  varchar(255)  |  NULL
+  url  |  varchar(255)  |  NULL
+  created_at  |  timestamp  |  NOT NULL DEFAULT 'CURRENT_TIMESTAMP'
+
+=== bank_statements ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  account_id  |  bigint unsigned  |  NOT NULL
+  matched_entry_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  description  |  varchar(255)  |  NOT NULL
+  amount  |  decimal(14,2)  |  NOT NULL
+  reference  |  varchar(255)  |  NULL
+  is_matched  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  is_reconciled  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== breeding_records ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  dam_id  |  bigint unsigned  |  NOT NULL
+  sire_id  |  bigint unsigned  |  NULL
+  method  |  enum('natural','ai')  |  NOT NULL DEFAULT 'natural'
+  breeding_date  |  date  |  NOT NULL
+  expected_calving_date  |  date  |  NULL
+  pregnancy_status  |  enum('open','confirmed','lost','calved')  |  NOT NULL DEFAULT 'open'
+  confirmation_date  |  date  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== budgets ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  fiscal_year_id  |  bigint unsigned  |  NOT NULL
+  account_id  |  bigint unsigned  |  NOT NULL
+  month  |  tinyint unsigned  |  NOT NULL
+  amount  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== cache ===
+  key  |  varchar(255)  |  NOT NULL
+  value  |  mediumtext  |  NOT NULL
+  expiration  |  int  |  NOT NULL
+
+=== cache_locks ===
+  key  |  varchar(255)  |  NOT NULL
+  owner  |  varchar(255)  |  NOT NULL
+  expiration  |  int  |  NOT NULL
+
+=== calving_records ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  dam_id  |  bigint unsigned  |  NOT NULL
+  calf_id  |  bigint unsigned  |  NULL
+  breeding_record_id  |  bigint unsigned  |  NULL
+  calving_date  |  date  |  NOT NULL
+  calving_time  |  time  |  NULL
+  birth_weight_kg  |  decimal(6,2)  |  NULL
+  condition  |  enum('healthy','weak','stillborn')  |  NOT NULL DEFAULT 'healthy'
+  difficulty_score  |  tinyint unsigned  |  NOT NULL DEFAULT '1'
+  colostrum_fed  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== companies ===
+  id  |  bigint unsigned  |  NOT NULL
+  name_en  |  varchar(255)  |  NOT NULL
+  name_ar  |  varchar(255)  |  NOT NULL
+  logo  |  varchar(255)  |  NULL
+  address_en  |  varchar(255)  |  NULL
+  address_ar  |  varchar(255)  |  NULL
+  country  |  varchar(255)  |  NOT NULL DEFAULT 'EG'
+  phone  |  varchar(255)  |  NULL
+  email  |  varchar(255)  |  NULL
+  website  |  varchar(255)  |  NULL
+  tax_number  |  varchar(255)  |  NULL
+  commercial_register  |  varchar(255)  |  NULL
+  max_users  |  smallint unsigned  |  NULL
+  currency  |  char(3)  |  NOT NULL DEFAULT 'EGP'
+  fiscal_year_start_month  |  tinyint unsigned  |  NOT NULL DEFAULT '1'
+  accounting_mode  |  enum('standalone','odoo')  |  NOT NULL DEFAULT 'standalone'
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  subscription_starts_at  |  date  |  NULL
+  subscription_ends_at  |  date  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== customers ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  name_en  |  varchar(255)  |  NOT NULL
+  name_ar  |  varchar(255)  |  NULL
+  code  |  varchar(255)  |  NULL
+  contact_person  |  varchar(255)  |  NULL
+  phone  |  varchar(255)  |  NULL
+  email  |  varchar(255)  |  NULL
+  address_en  |  varchar(255)  |  NULL
+  address_ar  |  varchar(255)  |  NULL
+  city  |  varchar(255)  |  NULL
+  country  |  varchar(255)  |  NOT NULL DEFAULT 'EG'
+  tax_number  |  varchar(255)  |  NULL
+  payment_terms_days  |  smallint unsigned  |  NOT NULL DEFAULT '30'
+  odoo_partner_id  |  bigint unsigned  |  NULL
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  is_supplier  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  supplier_id  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== failed_jobs ===
+  id  |  bigint unsigned  |  NOT NULL
+  uuid  |  varchar(255)  |  NOT NULL
+  connection  |  text  |  NOT NULL
+  queue  |  text  |  NOT NULL
+  payload  |  longtext  |  NOT NULL
+  exception  |  longtext  |  NOT NULL
+  failed_at  |  timestamp  |  NOT NULL DEFAULT 'CURRENT_TIMESTAMP'
+
+=== farm_cost_allocations ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  fiscal_year_id  |  bigint unsigned  |  NOT NULL
+  month  |  tinyint unsigned  |  NOT NULL
+  year  |  smallint unsigned  |  NOT NULL
+  month_start  |  date  |  NOT NULL
+  month_end  |  date  |  NOT NULL
+  labor_estimated  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  labor_actual  |  decimal(12,2)  |  NULL
+  labor_variance  |  decimal(12,2)  |  NULL
+  labor_journal_entry_id  |  bigint unsigned  |  NULL
+  labor_settlement_je_id  |  bigint unsigned  |  NULL
+  overhead_journal_entry_id  |  bigint unsigned  |  NULL
+  overhead_settlement_je_id  |  bigint unsigned  |  NULL
+  total_animal_days  |  int unsigned  |  NULL
+  rate_per_animal_day  |  decimal(14,8)  |  NULL
+  status  |  enum('draft','posted','settled','locked')  |  NOT NULL DEFAULT 'draft'
+  created_by  |  bigint unsigned  |  NULL
+  posted_by  |  bigint unsigned  |  NULL
+  settled_by  |  bigint unsigned  |  NULL
+  posted_at  |  timestamp  |  NULL
+  settled_at  |  timestamp  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== farm_overhead_lines ===
+  id  |  bigint unsigned  |  NOT NULL
+  farm_cost_allocation_id  |  bigint unsigned  |  NOT NULL
+  overhead_type_id  |  bigint unsigned  |  NOT NULL
+  estimated_amount  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  actual_amount  |  decimal(12,2)  |  NULL
+  variance_amount  |  decimal(12,2)  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== farm_overhead_types ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  name_en  |  varchar(255)  |  NULL
+  name_ar  |  varchar(255)  |  NULL
+  accrued_account_id  |  bigint unsigned  |  NOT NULL
+  variance_account_id  |  bigint unsigned  |  NOT NULL
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== farms ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  name_en  |  varchar(255)  |  NULL
+  name_ar  |  varchar(255)  |  NULL
+  address_en  |  varchar(255)  |  NULL
+  address_ar  |  varchar(255)  |  NULL
+  city  |  varchar(255)  |  NULL
+  region  |  varchar(255)  |  NULL
+  country  |  varchar(255)  |  NOT NULL DEFAULT 'EG'
+  latitude  |  decimal(10,7)  |  NULL
+  longitude  |  decimal(10,7)  |  NULL
+  phone  |  varchar(255)  |  NULL
+  email  |  varchar(255)  |  NULL
+  area_acres  |  decimal(10,2)  |  NULL
+  capacity_head  |  int unsigned  |  NULL
+  notes_en  |  text  |  NULL
+  notes_ar  |  text  |  NULL
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== feed_consumption_animals ===
+  id  |  bigint unsigned  |  NOT NULL
+  feed_consumption_id  |  bigint unsigned  |  NOT NULL
+  animal_id  |  bigint unsigned  |  NOT NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== feed_consumptions ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  lot_id  |  bigint unsigned  |  NOT NULL
+  feed_item_id  |  bigint unsigned  |  NULL
+  ration_id  |  bigint unsigned  |  NULL
+  inventory_item_id  |  bigint unsigned  |  NULL
+  location_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  head_count  |  smallint unsigned  |  NOT NULL
+  qty_kg  |  decimal(10,3)  |  NOT NULL
+  unit_cost  |  decimal(12,4)  |  NOT NULL
+  total_cost  |  decimal(12,2)  |  NOT NULL
+  planned_qty_kg  |  decimal(10,3)  |  NULL
+  variance_kg  |  decimal(10,3)  |  NULL
+  journal_entry_id  |  bigint unsigned  |  NULL
+  recorded_by  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== feed_items ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  name_en  |  varchar(255)  |  NOT NULL
+  name_ar  |  varchar(255)  |  NULL
+  type  |  enum('roughage','concentrate','supplement','mineral','other')  |  NOT NULL DEFAULT 'other'
+  unit  |  varchar(255)  |  NOT NULL DEFAULT 'kg'
+  unit_cost  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  cp_pct  |  decimal(5,2)  |  NULL
+  tdn_pct  |  decimal(5,2)  |  NULL
+  dm_pct  |  decimal(5,2)  |  NULL
+  ndf_pct  |  decimal(5,2)  |  NULL
+  me_mj  |  decimal(6,2)  |  NULL
+  supplier_id  |  bigint unsigned  |  NULL
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== financial_ratio_comments ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  fiscal_year_id  |  bigint unsigned  |  NOT NULL
+  ratio_key  |  varchar(60)  |  NOT NULL
+  comment  |  text  |  NULL
+  action  |  text  |  NULL
+  updated_by  |  bigint unsigned  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== fiscal_years ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  name  |  varchar(255)  |  NULL
+  year  |  smallint unsigned  |  NOT NULL
+  start_date  |  date  |  NOT NULL
+  end_date  |  date  |  NOT NULL
+  status  |  enum('open','closed','locked')  |  NOT NULL DEFAULT 'open'
+  closed_at  |  timestamp  |  NULL
+  closed_by  |  bigint unsigned  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== fixed_assets ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NULL
+  asset_code  |  varchar(255)  |  NOT NULL
+  name_en  |  varchar(255)  |  NULL
+  name_ar  |  varchar(255)  |  NULL
+  category  |  enum('land','building','vehicle','equipment','furniture','other')  |  NOT NULL DEFAULT 'equipment'
+  purchase_date  |  date  |  NOT NULL
+  in_service_date  |  date  |  NULL
+  purchase_cost  |  decimal(14,2)  |  NOT NULL
+  salvage_value  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  depreciation_method  |  enum('straight_line','declining_balance','none')  |  NOT NULL DEFAULT 'straight_line'
+  useful_life_months  |  smallint unsigned  |  NULL
+  db_rate  |  decimal(5,4)  |  NULL
+  accumulated_depreciation  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  net_book_value  |  decimal(14,2)  |  NULL
+  asset_account_id  |  bigint unsigned  |  NOT NULL
+  acc_dep_account_id  |  bigint unsigned  |  NOT NULL
+  dep_expense_account_id  |  bigint unsigned  |  NOT NULL
+  status  |  enum('active','fully_depreciated','disposed','impaired')  |  NOT NULL DEFAULT 'active'
+  disposal_date  |  date  |  NULL
+  disposal_proceeds  |  decimal(14,2)  |  NULL
+  disposal_journal_entry_id  |  bigint unsigned  |  NULL
+  journal_entry_id  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== fx_rates ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  currency  |  char(3)  |  NOT NULL
+  rate_date  |  date  |  NOT NULL
+  rate  |  decimal(15,6)  |  NOT NULL
+  notes  |  varchar(255)  |  NULL
+  updated_by  |  bigint unsigned  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== health_records ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  animal_id  |  bigint unsigned  |  NOT NULL
+  lot_id  |  bigint unsigned  |  NULL
+  inventory_item_id  |  bigint unsigned  |  NULL
+  location_id  |  bigint unsigned  |  NULL
+  type  |  enum('treatment','vet_visit','surgery','other')  |  NOT NULL DEFAULT 'treatment'
+  date  |  date  |  NOT NULL
+  condition  |  varchar(255)  |  NULL
+  medicine_name  |  varchar(255)  |  NULL
+  dose  |  decimal(8,2)  |  NULL
+  dose_unit  |  varchar(255)  |  NULL
+  route  |  varchar(255)  |  NULL
+  cost  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  currency  |  varchar(3)  |  NOT NULL DEFAULT 'EGP'
+  vet_id  |  bigint unsigned  |  NULL
+  vet_name  |  varchar(255)  |  NULL
+  outcome  |  enum('recovered','ongoing','died','slaughtered','unknown')  |  NULL
+  withdrawal_clear_date  |  date  |  NULL
+  is_quarantine  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  journal_entry_id  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== inventory_items ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NULL
+  location_id  |  bigint unsigned  |  NULL
+  master_item_id  |  bigint unsigned  |  NULL
+  is_master  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  name_en  |  varchar(255)  |  NULL
+  name_ar  |  varchar(255)  |  NULL
+  sku  |  varchar(255)  |  NULL
+  category  |  enum('feed','medicine','vaccine','equipment','supply','other')  |  NOT NULL DEFAULT 'other'
+  unit  |  varchar(255)  |  NOT NULL DEFAULT 'kg'
+  unit_cost  |  decimal(12,4)  |  NOT NULL DEFAULT '0.0000'
+  qty_on_hand  |  decimal(12,3)  |  NOT NULL DEFAULT '0.000'
+  reorder_point  |  decimal(12,3)  |  NULL
+  feed_item_id  |  bigint unsigned  |  NULL
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== inventory_locations ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NULL
+  name_en  |  varchar(255)  |  NULL
+  name_ar  |  varchar(255)  |  NULL
+  type  |  enum('warehouse','store_room','cold_storage','cabinet','shed','other')  |  NOT NULL DEFAULT 'warehouse'
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== inventory_receipt_batches ===
+  id  |  bigint unsigned  |  NOT NULL
+  procurement_id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  date  |  date  |  NOT NULL
+  status  |  enum('confirmed')  |  NOT NULL DEFAULT 'confirmed'
+  subtotal  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  journal_entry_id  |  bigint unsigned  |  NULL
+  created_by  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== inventory_receipt_lines ===
+  id  |  bigint unsigned  |  NOT NULL
+  receipt_batch_id  |  bigint unsigned  |  NOT NULL
+  procurement_item_line_id  |  bigint unsigned  |  NOT NULL
+  inventory_item_id  |  bigint unsigned  |  NOT NULL
+  location_id  |  bigint unsigned  |  NOT NULL
+  qty_received  |  decimal(12,3)  |  NOT NULL
+  unit_cost_actual  |  decimal(12,4)  |  NOT NULL
+  total_actual  |  decimal(12,2)  |  NOT NULL
+  inventory_transaction_id  |  bigint unsigned  |  NULL
+  wac_before  |  decimal(12,4)  |  NULL
+  wac_after  |  decimal(12,4)  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== inventory_transactions ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NULL
+  location_id  |  bigint unsigned  |  NULL
+  counterpart_location_id  |  bigint unsigned  |  NULL
+  item_id  |  bigint unsigned  |  NULL
+  type  |  enum('receipt','consumption','adjustment','transfer_in','transfer_out','livestock_receipt')  |  NOT NULL
+  date  |  date  |  NOT NULL
+  qty  |  decimal(12,3)  |  NOT NULL
+  unit_cost  |  decimal(12,4)  |  NOT NULL DEFAULT '0.0000'
+  total  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  qty_after  |  decimal(12,3)  |  NULL
+  wac_after  |  decimal(12,4)  |  NULL
+  ref_type  |  varchar(255)  |  NULL
+  ref_id  |  bigint unsigned  |  NULL
+  transfer_batch_ref  |  varchar(255)  |  NULL
+  journal_entry_id  |  bigint unsigned  |  NULL
+  recorded_by  |  bigint unsigned  |  NULL
+  supplier_id  |  bigint unsigned  |  NULL
+  ref_no  |  varchar(100)  |  NULL
+  ap_invoice_id  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== job_batches ===
+  id  |  varchar(255)  |  NOT NULL
+  name  |  varchar(255)  |  NOT NULL
+  total_jobs  |  int  |  NOT NULL
+  pending_jobs  |  int  |  NOT NULL
+  failed_jobs  |  int  |  NOT NULL
+  failed_job_ids  |  longtext  |  NOT NULL
+  options  |  mediumtext  |  NULL
+  cancelled_at  |  int  |  NULL
+  created_at  |  int  |  NOT NULL
+  finished_at  |  int  |  NULL
+
+=== jobs ===
+  id  |  bigint unsigned  |  NOT NULL
+  queue  |  varchar(255)  |  NOT NULL
+  payload  |  longtext  |  NOT NULL
+  attempts  |  tinyint unsigned  |  NOT NULL
+  reserved_at  |  int unsigned  |  NULL
+  available_at  |  int unsigned  |  NOT NULL
+  created_at  |  int unsigned  |  NOT NULL
+
+=== journal_entries ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  fiscal_year_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  reference  |  varchar(255)  |  NULL
+  description  |  varchar(255)  |  NOT NULL
+  period  |  tinyint unsigned  |  NOT NULL
+  status  |  enum('draft','posted','reversed')  |  NOT NULL DEFAULT 'draft'
+  source_type  |  varchar(255)  |  NULL
+  source_id  |  bigint unsigned  |  NULL
+  entry_type  |  enum('auto','manual','opening_balance','closing','reversal','procurement','sale','feed_consumption','health','depreciation','payment','labor_overhead_accrual','labor_overhead_settlement')  |  NOT NULL DEFAULT 'auto'
+  total_debit  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  total_credit  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  posted_by  |  bigint unsigned  |  NULL
+  posted_at  |  timestamp  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== journal_lines ===
+  id  |  bigint unsigned  |  NOT NULL
+  entry_id  |  bigint unsigned  |  NOT NULL
+  account_id  |  bigint unsigned  |  NOT NULL
+  debit  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  credit  |  decimal(14,2)  |  NOT NULL DEFAULT '0.00'
+  lot_id  |  bigint unsigned  |  NULL
+  animal_id  |  bigint unsigned  |  NULL
+  farm_id  |  bigint unsigned  |  NULL
+  memo  |  varchar(255)  |  NULL
+  foreign_currency  |  varchar(3)  |  NULL
+  foreign_amount  |  decimal(15,4)  |  NULL
+  exchange_rate  |  decimal(15,6)  |  NULL DEFAULT '1.000000'
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== lots ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  name  |  varchar(255)  |  NOT NULL
+  lot_number  |  varchar(255)  |  NULL
+  start_date  |  date  |  NOT NULL
+  target_slaughter_date  |  date  |  NULL
+  closed_date  |  date  |  NULL
+  pen  |  varchar(255)  |  NULL
+  status  |  enum('active','completed','archived')  |  NOT NULL DEFAULT 'active'
+  notes_en  |  text  |  NULL
+  notes_ar  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== migrations ===
+  id  |  int unsigned  |  NOT NULL
+  migration  |  varchar(255)  |  NOT NULL
+  batch  |  int  |  NOT NULL
+
+=== model_has_permissions ===
+  permission_id  |  bigint unsigned  |  NOT NULL
+  model_type  |  varchar(255)  |  NOT NULL
+  model_id  |  bigint unsigned  |  NOT NULL
+
+=== model_has_roles ===
+  role_id  |  bigint unsigned  |  NOT NULL
+  model_type  |  varchar(255)  |  NOT NULL
+  model_id  |  bigint unsigned  |  NOT NULL
+
+=== odoo_sync_log ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  direction  |  enum('push','pull')  |  NOT NULL
+  model  |  varchar(255)  |  NOT NULL
+  local_model  |  varchar(255)  |  NULL
+  local_id  |  bigint unsigned  |  NULL
+  odoo_id  |  bigint unsigned  |  NULL
+  status  |  enum('pending','success','failed','skipped')  |  NOT NULL DEFAULT 'pending'
+  payload  |  text  |  NULL
+  error  |  text  |  NULL
+  attempts  |  tinyint unsigned  |  NOT NULL DEFAULT '0'
+  last_attempted_at  |  timestamp  |  NULL
+  synced_at  |  timestamp  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== password_reset_tokens ===
+  email  |  varchar(255)  |  NOT NULL
+  token  |  varchar(255)  |  NOT NULL
+  created_at  |  timestamp  |  NULL
+
+=== payment_allocations ===
+  id  |  bigint unsigned  |  NOT NULL
+  payment_id  |  bigint unsigned  |  NOT NULL
+  ar_invoice_id  |  bigint unsigned  |  NULL
+  ap_invoice_id  |  bigint unsigned  |  NULL
+  allocated_amount  |  decimal(15,4)  |  NOT NULL DEFAULT '0.0000'
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== payments ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  type  |  enum('incoming','outgoing')  |  NOT NULL
+  payment_category  |  enum('customer_collection','supplier_payment','employee_collection','employee_payment','shareholder_collection','shareholder_payment','expense_payment','other_collection','other_payment')  |  NULL
+  sub_type  |  varchar(50)  |  NULL
+  sub_type_comment  |  varchar(255)  |  NULL
+  payee_name  |  varchar(255)  |  NULL
+  ap_invoice_id  |  bigint unsigned  |  NULL
+  ar_invoice_id  |  bigint unsigned  |  NULL
+  journal_entry_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  amount  |  decimal(14,2)  |  NOT NULL
+  currency  |  varchar(3)  |  NOT NULL DEFAULT 'EGP'
+  exchange_rate  |  decimal(15,6)  |  NOT NULL DEFAULT '1.000000'
+  method  |  enum('cash','bank_transfer','cheque','other')  |  NOT NULL DEFAULT 'bank_transfer'
+  bank_name  |  varchar(100)  |  NULL
+  bank_account_id  |  bigint unsigned  |  NULL
+  check_number  |  varchar(50)  |  NULL
+  check_bank  |  varchar(100)  |  NULL
+  check_drawn_on_acct  |  varchar(50)  |  NULL
+  check_status  |  enum('in_safe','under_collection','collected','rejected','returned_to_customer')  |  NULL
+  check_received_date  |  date  |  NULL
+  check_sent_to_bank_date  |  date  |  NULL
+  check_collection_date  |  date  |  NULL
+  check_rejection_date  |  date  |  NULL
+  recollection_bank_name  |  varchar(100)  |  NULL
+  expense_account_id  |  bigint unsigned  |  NULL
+  reversal_journal_entry_id  |  bigint unsigned  |  NULL
+  reference  |  varchar(255)  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== permissions ===
+  id  |  bigint unsigned  |  NOT NULL
+  name  |  varchar(255)  |  NOT NULL
+  guard_name  |  varchar(255)  |  NOT NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== procurement_item_lines ===
+  id  |  bigint unsigned  |  NOT NULL
+  procurement_id  |  bigint unsigned  |  NOT NULL
+  inventory_item_id  |  bigint unsigned  |  NOT NULL
+  location_id  |  bigint unsigned  |  NULL
+  qty_ordered  |  decimal(12,3)  |  NOT NULL
+  qty_received  |  decimal(12,3)  |  NOT NULL DEFAULT '0.000'
+  unit_cost_estimated  |  decimal(12,4)  |  NOT NULL
+  unit_cost_actual  |  decimal(12,4)  |  NULL
+  total_estimated  |  decimal(12,2)  |  NOT NULL
+  total_actual  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  line_status  |  enum('open','fully_received','over_received','force_closed')  |  NOT NULL DEFAULT 'open'
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== procurement_lines ===
+  id  |  bigint unsigned  |  NOT NULL
+  procurement_id  |  bigint unsigned  |  NOT NULL
+  animal_id  |  bigint unsigned  |  NULL
+  weight_kg  |  decimal(8,2)  |  NULL
+  price_per_head  |  decimal(12,2)  |  NULL
+  price_per_kg  |  decimal(10,4)  |  NULL
+  freight_allocated  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  total_cost  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  notes  |  text  |  NULL
+  breed  |  varchar(255)  |  NULL
+  sex  |  enum('male','female','castrated','mixed')  |  NULL
+  estimated_weight_kg  |  decimal(8,2)  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== procurement_records ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  po_type  |  enum('cattle','inventory')  |  NOT NULL DEFAULT 'cattle'
+  farm_id  |  bigint unsigned  |  NOT NULL
+  supplier_id  |  bigint unsigned  |  NOT NULL
+  lot_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  invoice_ref  |  varchar(255)  |  NULL
+  po_reference  |  varchar(50)  |  NULL
+  head_count  |  smallint unsigned  |  NOT NULL DEFAULT '0'
+  min_head  |  smallint unsigned  |  NOT NULL DEFAULT '0'
+  max_head  |  smallint unsigned  |  NOT NULL DEFAULT '0'
+  received_head  |  smallint unsigned  |  NOT NULL DEFAULT '0'
+  estimated_price_per_kg  |  decimal(10,4)  |  NULL
+  estimated_avg_weight_kg  |  decimal(8,2)  |  NULL
+  subtotal  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  freight_cost  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  other_costs  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  total_amount  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  currency  |  varchar(3)  |  NOT NULL DEFAULT 'EGP'
+  payment_terms_days  |  smallint unsigned  |  NOT NULL DEFAULT '30'
+  due_date  |  date  |  NULL
+  status  |  enum('draft','confirmed','partially_paid','paid','cancelled')  |  NOT NULL DEFAULT 'draft'
+  po_status  |  enum('draft','open','partially_received','on_track','fully_received','over_received','force_closed')  |  NOT NULL DEFAULT 'draft'
+  closure_reason  |  text  |  NULL
+  closed_at  |  timestamp  |  NULL
+  closed_by  |  bigint unsigned  |  NULL
+  journal_entry_id  |  bigint unsigned  |  NULL
+  ap_invoice_id  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== ration_lines ===
+  id  |  bigint unsigned  |  NOT NULL
+  ration_id  |  bigint unsigned  |  NOT NULL
+  feed_item_id  |  bigint unsigned  |  NOT NULL
+  qty_per_head_kg  |  decimal(8,3)  |  NOT NULL
+  cost_per_head  |  decimal(10,4)  |  NULL
+  cp_contribution  |  decimal(5,2)  |  NULL
+  tdn_contribution  |  decimal(5,2)  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== rations ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  lot_id  |  bigint unsigned  |  NOT NULL
+  name  |  varchar(255)  |  NOT NULL
+  effective_date  |  date  |  NOT NULL
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  cost_per_head_day  |  decimal(10,4)  |  NULL
+  total_cp_pct  |  decimal(5,2)  |  NULL
+  total_tdn_pct  |  decimal(5,2)  |  NULL
+  total_dm_kg  |  decimal(8,3)  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== role_has_permissions ===
+  permission_id  |  bigint unsigned  |  NOT NULL
+  role_id  |  bigint unsigned  |  NOT NULL
+
+=== roles ===
+  id  |  bigint unsigned  |  NOT NULL
+  name  |  varchar(255)  |  NOT NULL
+  guard_name  |  varchar(255)  |  NOT NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== sales_lines ===
+  id  |  bigint unsigned  |  NOT NULL
+  sale_id  |  bigint unsigned  |  NOT NULL
+  animal_id  |  bigint unsigned  |  NULL
+  slaughter_id  |  bigint unsigned  |  NULL
+  price_per_kg  |  decimal(10,4)  |  NULL
+  price_per_head  |  decimal(12,2)  |  NULL
+  qty_kg  |  decimal(8,2)  |  NULL
+  total  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  cogs_per_head  |  decimal(12,2)  |  NULL
+  gross_margin  |  decimal(12,2)  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== sales_records ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  customer_id  |  bigint unsigned  |  NOT NULL
+  date  |  date  |  NOT NULL
+  invoice_ref  |  varchar(255)  |  NULL
+  subtotal  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  discount  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  total_amount  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  currency  |  varchar(3)  |  NOT NULL DEFAULT 'EGP'
+  payment_terms_days  |  smallint unsigned  |  NOT NULL DEFAULT '30'
+  due_date  |  date  |  NULL
+  status  |  enum('draft','confirmed','partially_paid','paid','cancelled')  |  NOT NULL DEFAULT 'draft'
+  journal_entry_id  |  bigint unsigned  |  NULL
+  ar_invoice_id  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== sessions ===
+  id  |  varchar(255)  |  NOT NULL
+  user_id  |  bigint unsigned  |  NULL
+  ip_address  |  varchar(45)  |  NULL
+  user_agent  |  text  |  NULL
+  payload  |  longtext  |  NOT NULL
+  last_activity  |  int  |  NOT NULL
+
+=== settings ===
+  id  |  bigint unsigned  |  NOT NULL
+  group  |  varchar(255)  |  NOT NULL
+  name  |  varchar(255)  |  NOT NULL
+  locked  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  payload  |  json  |  NOT NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== slaughter_records ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  animal_id  |  bigint unsigned  |  NOT NULL
+  lot_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  abattoir  |  varchar(255)  |  NULL
+  liveweight_kg  |  decimal(8,2)  |  NOT NULL
+  deadweight_kg  |  decimal(8,2)  |  NULL
+  dressing_pct  |  decimal(5,2)  |  NULL
+  grade  |  varchar(255)  |  NULL
+  brand_number  |  varchar(255)  |  NULL
+  slaughter_cost  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  currency  |  varchar(3)  |  NOT NULL DEFAULT 'EGP'
+  journal_entry_id  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== suppliers ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  name_en  |  varchar(255)  |  NOT NULL
+  name_ar  |  varchar(255)  |  NULL
+  code  |  varchar(255)  |  NULL
+  type  |  enum('animal','feed','medicine','equipment','other')  |  NOT NULL DEFAULT 'other'
+  contact_person  |  varchar(255)  |  NULL
+  phone  |  varchar(255)  |  NULL
+  email  |  varchar(255)  |  NULL
+  website  |  varchar(255)  |  NULL
+  address_en  |  varchar(255)  |  NULL
+  address_ar  |  varchar(255)  |  NULL
+  city  |  varchar(255)  |  NULL
+  country  |  varchar(255)  |  NOT NULL DEFAULT 'EG'
+  tax_number  |  varchar(255)  |  NULL
+  bank_name  |  varchar(255)  |  NULL
+  bank_account  |  varchar(255)  |  NULL
+  payment_terms_days  |  smallint unsigned  |  NOT NULL DEFAULT '30'
+  odoo_partner_id  |  bigint unsigned  |  NULL
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  is_customer  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+  deleted_at  |  timestamp  |  NULL
+
+=== user_farms ===
+  id  |  bigint unsigned  |  NOT NULL
+  user_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  is_primary  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== user_tasks ===
+  id  |  bigint unsigned  |  NOT NULL
+  user_id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NULL
+  title  |  varchar(255)  |  NOT NULL
+  description  |  text  |  NULL
+  priority  |  enum('low','medium','high')  |  NOT NULL DEFAULT 'medium'
+  status  |  enum('not_started','in_progress','completed','cancelled')  |  NOT NULL DEFAULT 'not_started'
+  expected_start_date  |  date  |  NULL
+  expected_duration_days  |  smallint unsigned  |  NULL
+  expected_end_date  |  date  |  NULL
+  actual_start_date  |  date  |  NULL
+  actual_duration_days  |  smallint unsigned  |  NULL
+  actual_end_date  |  date  |  NULL
+  reminder_enabled  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  completion_notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== users ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NULL
+  name  |  varchar(255)  |  NOT NULL
+  name_en  |  varchar(255)  |  NULL
+  name_ar  |  varchar(255)  |  NULL
+  email  |  varchar(255)  |  NOT NULL
+  phone  |  varchar(255)  |  NULL
+  avatar  |  varchar(255)  |  NULL
+  job_title_en  |  varchar(255)  |  NULL
+  job_title_ar  |  varchar(255)  |  NULL
+  language  |  enum('en','ar')  |  NOT NULL DEFAULT 'en'
+  theme  |  enum('light','dark')  |  NOT NULL DEFAULT 'light'
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  is_super_admin  |  tinyint(1)  |  NOT NULL DEFAULT '0'
+  last_login_at  |  timestamp  |  NULL
+  email_verified_at  |  timestamp  |  NULL
+  password  |  varchar(255)  |  NOT NULL
+  remember_token  |  varchar(100)  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== vaccination_records ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  animal_id  |  bigint unsigned  |  NOT NULL
+  vaccine_id  |  bigint unsigned  |  NULL
+  inventory_item_id  |  bigint unsigned  |  NULL
+  location_id  |  bigint unsigned  |  NULL
+  journal_entry_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  batch_number  |  varchar(255)  |  NULL
+  next_due_date  |  date  |  NULL
+  dose_given_ml  |  decimal(6,2)  |  NULL
+  cost  |  decimal(12,2)  |  NOT NULL DEFAULT '0.00'
+  administered_by  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== vaccines ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  name_en  |  varchar(255)  |  NOT NULL
+  name_ar  |  varchar(255)  |  NULL
+  manufacturer  |  varchar(255)  |  NULL
+  disease_target  |  varchar(255)  |  NULL
+  dose_ml  |  decimal(6,2)  |  NULL
+  route  |  varchar(255)  |  NULL
+  withdrawal_days  |  smallint unsigned  |  NOT NULL DEFAULT '0'
+  storage_conditions  |  varchar(255)  |  NULL
+  is_active  |  tinyint(1)  |  NOT NULL DEFAULT '1'
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
+
+=== weight_records ===
+  id  |  bigint unsigned  |  NOT NULL
+  company_id  |  bigint unsigned  |  NOT NULL
+  farm_id  |  bigint unsigned  |  NOT NULL
+  animal_id  |  bigint unsigned  |  NOT NULL
+  lot_id  |  bigint unsigned  |  NULL
+  date  |  date  |  NOT NULL
+  weight_kg  |  decimal(8,2)  |  NOT NULL
+  scale_reference  |  varchar(255)  |  NULL
+  session_ref  |  varchar(255)  |  NULL
+  adg_kg  |  decimal(6,3)  |  NULL
+  total_gain_kg  |  decimal(8,2)  |  NULL
+  days_on_feed  |  smallint unsigned  |  NULL
+  recorded_by  |  bigint unsigned  |  NULL
+  notes  |  text  |  NULL
+  created_at  |  timestamp  |  NULL
+  updated_at  |  timestamp  |  NULL
