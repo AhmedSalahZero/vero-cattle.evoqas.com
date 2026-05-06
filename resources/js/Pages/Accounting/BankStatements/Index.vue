@@ -5,6 +5,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 // ── Props ─────────────────────────────────────────────────────────
 const props = defineProps({
     lines:     Object,   // paginated
@@ -369,7 +371,7 @@ const summaryData = computed(() => props.summary ?? {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+   
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
             <!-- ── Hero ──────────────────────────────────────────── -->
@@ -1143,5 +1145,5 @@ const summaryData = computed(() => props.summary ?? {
             </Transition>
         </Teleport>
 
-    </AuthenticatedLayout>
+   
 </template>

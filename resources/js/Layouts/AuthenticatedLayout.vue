@@ -39,11 +39,9 @@ router.on('before', () => {
 })
 
 router.on('navigate', () => {
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            if (sidebarEl.value) sidebarEl.value.scrollTop = sidebarScrollTop.value
-        })
-    })
+    setTimeout(() => {
+        if (sidebarEl.value) sidebarEl.value.scrollTop = sidebarScrollTop.value
+    }, 500)
 })
 
 // ── Inertia page ─────────────────────────────────────────────────
@@ -499,7 +497,6 @@ const navGroups = computed(() => {
              SIDEBAR
         ══════════════════════════════════════════ -->
         <aside
-            ref="sidebarEl"
             class="cv-sidebar"
             :class="{
                 'cv-sidebar--collapsed':   sidebarCollapsed,
@@ -567,7 +564,7 @@ const navGroups = computed(() => {
             </div>
 
             <!-- ── Navigation ──────────────────────────────── -->
-            <nav class="cv-sidebar-nav cv-scroll">
+            <nav ref="sidebarEl" class="cv-sidebar-nav cv-scroll">
                 <template v-for="group in navGroups" :key="group.label.en">
 
                     <!-- Group label (expanded) / divider (collapsed) -->
@@ -871,11 +868,9 @@ const navGroups = computed(() => {
    SIDEBAR EXTENSIONS
 ══════════════════════════════════════════════════════════════════ */
 .cv-sidebar {
-    position: sticky;
-    top: 0;
     height: 100vh;
     overflow-x: hidden;
-    overflow-y: auto;
+    overflow-y: hidden;
     z-index: 40;
     transition: width 0.22s ease;
 }
@@ -966,6 +961,7 @@ const navGroups = computed(() => {
 /* Nav area */
 .cv-sidebar-nav {
     flex: 1;
+    min-height: 0;
     padding-bottom: 0.5rem;
     overflow-y: auto;
 }

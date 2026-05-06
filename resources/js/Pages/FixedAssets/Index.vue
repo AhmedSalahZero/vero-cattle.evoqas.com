@@ -1,5 +1,5 @@
 <template>
-  <AuthenticatedLayout>
+  
   <div :dir="isRtl ? 'rtl' : 'ltr'">
 
     <!-- ── Hero ─────────────────────────────────────────────────── -->
@@ -273,7 +273,7 @@
     </Teleport>
 
   </div>
-  </AuthenticatedLayout>
+  
 </template>
 
 <script setup>
@@ -282,6 +282,8 @@ import { Link, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
+
+defineOptions({ layout: AuthenticatedLayout })
 
 const { locale, isRtl, n } = useLocale()
 

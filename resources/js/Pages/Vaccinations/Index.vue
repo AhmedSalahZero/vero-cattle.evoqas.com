@@ -74,6 +74,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const props = defineProps({
     records:  { type: Object, default: () => ({ data: [], links: [], meta: {} }) },
     inventoryVaccines: { type: Array,  default: () => [] },  // inventory items category=vaccine, with location_stocks
@@ -555,7 +557,7 @@ const formatCost = (v) => {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+    
 
         <!-- ── Hero ──────────────────────────────────────────────── -->
         <div class="cv-page-hero">
@@ -1212,7 +1214,7 @@ const formatCost = (v) => {
             </div>
         </Transition>
 
-    </AuthenticatedLayout>
+    
 </template>
 
 <style scoped>

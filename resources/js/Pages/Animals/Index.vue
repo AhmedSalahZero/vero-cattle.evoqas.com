@@ -38,6 +38,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const props = defineProps({
     animals:  Object,
     farms:    Array,
@@ -351,7 +353,7 @@ function goToPage(url) {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+   
         <div :dir="isRtl ? 'rtl' : 'ltr' ">
 
             <!-- ── Hero ────────────────────────────────────────── -->
@@ -718,7 +720,7 @@ function goToPage(url) {
             </Transition>
         </Teleport>
 
-    </AuthenticatedLayout>
+   
 </template>
 
 <style scoped>

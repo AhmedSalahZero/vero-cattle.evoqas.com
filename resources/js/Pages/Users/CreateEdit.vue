@@ -589,7 +589,7 @@ const roleOptions = ['Company Admin', 'Farm Manager', 'Veterinarian', 'Feed Mana
                         </div>
                     </div>
 
-                    <!-- ╔══ SECTION 5 — Farm Access ════════════════╗ -->
+                   <!-- ╔══ SECTION 5 — Farm Access ════════════════╗ -->
                     <div v-if="farms.length > 0" class="form-section">
                         <div class="section-head">
                             <div class="section-num">5</div>
@@ -599,12 +599,10 @@ const roleOptions = ['Company Admin', 'Farm Manager', 'Veterinarian', 'Feed Mana
                             </div>
                         </div>
                         <div class="farm-grid">
-                            <label v-for="farm in farms" :key="farm.id"
-                                   class="farm-check-card"
-                                   :class="form.farm_ids.includes(farm.id) ? 'farm-card-active' : ''">
-                                <input type="checkbox" class="sr-only"
-                                       :checked="form.farm_ids.includes(farm.id)"
-                                       @change="toggleFarm(farm.id)"/>
+                            <div v-for="farm in farms" :key="farm.id"
+                                class="farm-check-card"
+                                :class="form.farm_ids.includes(farm.id) ? 'farm-card-active' : ''"
+                                @click="toggleFarm(farm.id)">
                                 <div class="farm-check-icon" :class="form.farm_ids.includes(farm.id) ? 'fci-active' : ''">
                                     <svg v-if="form.farm_ids.includes(farm.id)" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
@@ -614,7 +612,7 @@ const roleOptions = ['Company Admin', 'Farm Manager', 'Veterinarian', 'Feed Mana
                                     <p class="farm-check-name">{{ farm.name_en }}</p>
                                     <p v-if="farm.name_ar" class="farm-check-ar" dir="rtl">{{ farm.name_ar }}</p>
                                 </div>
-                            </label>
+                            </div>
                         </div>
                     </div>
 

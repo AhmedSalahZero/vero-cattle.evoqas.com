@@ -19,6 +19,8 @@ import { Head, Link, router, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const props = defineProps({
     users:       { type: Array,  default: () => [] },
     companies:   { type: Array,  default: () => [] },
@@ -117,18 +119,7 @@ const flash = computed(() => usePage().props.flash ?? {})
 
 <template>
     <Head title="Users" />
-    <AuthenticatedLayout>
-        <template #header>
-            <span class="eyebrow-crumb">
-                {{ isSuperAdmin ? 'Super Admin' : 'Settings' }}
-            </span>
-            <svg class="w-3 h-3 mx-1.5 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-            </svg>
-            <span style="font-size:0.8125rem;font-weight:500;color:var(--cv-text-secondary)">
-                Users
-            </span>
-        </template>
+   
 
         <div class="pg-shell">
 
@@ -468,7 +459,7 @@ const flash = computed(() => usePage().props.flash ?? {})
                 </div>
             </div>
         </Transition>
-    </AuthenticatedLayout>
+   
 </template>
 
 <style scoped>

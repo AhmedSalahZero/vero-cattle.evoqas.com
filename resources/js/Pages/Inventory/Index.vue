@@ -10,6 +10,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const { locale: lang, isRtl, n } = useLocale()
 
 const props = defineProps({
@@ -133,7 +135,7 @@ const t = computed(() => lang.value === 'ar' ? {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+    
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
             <div class="cv-page-hero">
@@ -291,7 +293,7 @@ const t = computed(() => lang.value === 'ar' ? {
             </Transition>
 
         </div>
-    </AuthenticatedLayout>
+    
 </template>
 
 <style scoped>

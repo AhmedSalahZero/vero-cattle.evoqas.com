@@ -24,6 +24,7 @@ import { Link, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
+defineOptions({ layout: AuthenticatedLayout })
 
 const { locale: lang, isRtl, n } = useLocale()
 
@@ -203,7 +204,7 @@ function accountLabel(acc) {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+    
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
             <!-- Flash -->
@@ -751,7 +752,7 @@ function accountLabel(acc) {
             </Teleport>
 
         </div>
-    </AuthenticatedLayout>
+    
 </template>
 
 <style scoped>

@@ -18,6 +18,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const props = defineProps({
     currencies:        { type: Array,  default: () => [] },
     currentRates:      { type: Array,  default: () => [] },
@@ -219,6 +221,8 @@ const submitRates = () => {
     form.transform(data => ({
         ...data,
         rates: filled,
+        // Super Admin must send the selected company_id with every store request
+        ...(isSuperAdmin.value ? { company_id: selectedCompany.value } : {}),
     })).post(route('fx-rates.store'), {
         preserveScroll: true,
         onSuccess: () => { panelOpen.value = false },
@@ -268,7 +272,7 @@ const currencyStripe = {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+    
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
             <!-- ── Hero ──────────────────────────────────────────── -->
@@ -280,6 +284,7 @@ const currencyStripe = {
                     <button
                         v-if="canEdit"
                         class="cv-btn cv-btn-amber"
+                        :disabled="isSuperAdmin && !selectedCompany"
                         @click="openPanel"
                     >
                         <!-- currency swap icon -->
@@ -670,7 +675,7 @@ const currencyStripe = {
             </Transition>
 
         </div>
-    </AuthenticatedLayout>
+   
 </template>
 
 <style scoped>

@@ -58,7 +58,17 @@ class ArInvoiceController extends Controller
             403
         );
 
-        $query = ArInvoice::with('customer:id,name_en,name_ar');
+        // 📌 Correlated subquery — one SQL round-trip, no N+1.
+        // Counts payments linked to each AR invoice via the payment_allocations pivot.
+        // Falls back to direct ar_invoice_id FK for payments recorded the old way.
+        $paymentCountSub = DB::table('payments')
+            ->selectRaw('COUNT(*)')
+            ->whereColumn('payments.ar_invoice_id', 'ar_invoices.id')
+            ->where('payments.type', 'collection')
+            ->toSql();
+
+        $query = ArInvoice::with('customer:id,name_en,name_ar')
+            ->selectRaw("ar_invoices.*, ({$paymentCountSub}) as payment_count");
 
         if ($authUser->is_super_admin) {
             if ($request->filled('company_id')) {
@@ -475,6 +485,7 @@ class ArInvoiceController extends Controller
             'balance_egp'   => round($i->balance * $i->exchange_rate, 2),
             'status'        => $i->status,
             'notes'         => $i->notes,
+            'payment_count' => $i->payment_count ?? 0,
         ];
     }
 

@@ -1,7 +1,8 @@
 <template>
-  <AuthenticatedLayout>
+  
   <div :dir="isRtl ? 'rtl' : 'ltr'">
 
+    <!-- Hero -->
     <div class="cv-page-hero">
       <div class="cv-page-hero-eyebrow">{{ t.eyebrow }}</div>
       <div class="cv-page-hero-title">{{ t.title }}</div>
@@ -39,7 +40,7 @@
         </div>
       </div>
 
-      <!-- Aging -->
+      <!-- Aging Panel -->
       <div class="cv-card mb-5" style="padding:1rem 1.25rem">
         <div style="font-size:0.68rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--cv-green-bright);margin-bottom:0.75rem">
           {{ t.agingTitle }}
@@ -77,6 +78,16 @@
               <option v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
             </select>
           </div>
+          <!-- Match filter — client-side only, not sent to server -->
+          <div class="cv-field" style="margin:0;min-width:130px">
+            <label class="cv-label">{{ t.filterMatch }}</label>
+            <select v-model="matchFilter" class="cv-select cv-select-sm">
+              <option value="">{{ t.allMatch }}</option>
+              <option value="collected">{{ t.matchCollected }}</option>
+              <option value="partial">{{ t.matchPartial }}</option>
+              <option value="open">{{ t.matchOpen }}</option>
+            </select>
+          </div>
           <div class="cv-field" style="margin:0">
             <label class="cv-label">{{ t.from }}</label>
             <input type="date" v-model="af.date_from" class="cv-input cv-input-sm" @change="applyFilters" />
@@ -89,95 +100,183 @@
         </div>
       </div>
 
-      <!-- Cards -->
-      <div v-if="invoices.data.length" class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr))">
-        <div v-for="inv in invoices.data" :key="inv.id"
-          class="cv-card" :class="stripeClass(inv.status)"
-          style="padding:0;overflow:hidden">
+      <!-- Table Card -->
+      <div class="cv-card" style="padding:0;overflow:hidden">
 
-          <div class="flex items-start justify-between" style="padding:1rem 1.25rem 0.75rem">
-            <div style="min-width:0;flex:1">
-              <div style="font-size:0.63rem;color:var(--cv-text-muted);margin-bottom:0.15rem;font-family:monospace">{{ inv.reference || arRef(inv.id) }}</div>
-              <div style="font-weight:700;font-size:0.95rem;color:var(--cv-text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ n(inv.customer,'name') }}</div>
-              <div style="font-size:0.72rem;color:var(--cv-text-muted);margin-top:0.1rem">{{ inv.date }}</div>
-            </div>
-            <span class="cv-badge" :class="badgeClass(inv.status)" style="margin-inline-start:0.75rem;flex-shrink:0">{{ statusLabel(inv.status) }}</span>
+        <!-- Empty state -->
+        <div v-if="!visibleRows.length" style="padding:3rem;text-align:center;color:var(--cv-text-muted);font-size:0.85rem">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 0.75rem;display:block;color:var(--cv-border)"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="13" y2="15"/></svg>
+          {{ t.empty }}
+        </div>
+
+        <!-- Table -->
+        <div v-else style="overflow-x:auto">
+          <table class="cv-table" style="min-width:860px">
+            <thead>
+              <tr>
+                <th style="width:120px">{{ t.colRef }}</th>
+                <th style="width:96px">{{ t.colDate }}</th>
+                <th>{{ t.colCustomer }}</th>
+                <th style="width:90px">{{ t.colStatus }}</th>
+                <th style="width:100px">{{ t.colMatch }}</th>
+                <th style="width:130px;text-align:end">{{ t.colTotal }}</th>
+                <th style="width:110px;text-align:end">{{ t.colPaid }}</th>
+                <th style="width:120px;text-align:end">{{ t.colBalance }}</th>
+                <th style="width:96px">{{ t.colDue }}</th>
+                <th style="width:88px"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="inv in visibleRows" :key="inv.id">
+
+                <!-- Reference -->
+                <td>
+                  <span style="font-family:monospace;font-size:0.72rem;color:var(--cv-text-muted)">
+                    {{ inv.reference || arRef(inv.id) }}
+                  </span>
+                </td>
+
+                <!-- Date -->
+                <td style="font-size:0.78rem;color:var(--cv-text-secondary)">{{ inv.date }}</td>
+
+                <!-- Customer -->
+                <td>
+                  <span style="font-weight:600;font-size:0.82rem;color:var(--cv-text-primary)">
+                    {{ n(inv.customer,'name') }}
+                  </span>
+                </td>
+
+                <!-- Status badge -->
+                <td>
+                  <span class="cv-badge" :class="statusBadgeClass(inv.status)">{{ statusLabel(inv.status) }}</span>
+                </td>
+
+                <!-- Match badge -->
+                <td>
+                  <!-- Collected: paid in full -->
+                  <span v-if="inv.status === 'paid'"
+                    class="cv-badge cv-badge-green"
+                    style="display:inline-flex;align-items:center;gap:0.25rem">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    {{ t.matchCollected }}
+                  </span>
+                  <!-- Partial: some payments but not fully paid -->
+                  <span v-else-if="inv.payment_count > 0"
+                    class="cv-badge cv-badge-amber"
+                    style="display:inline-flex;align-items:center;gap:0.25rem">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    {{ t.matchPartial }}
+                  </span>
+                  <!-- Open: no payments at all -->
+                  <span v-else
+                    class="cv-badge cv-badge-neutral"
+                    style="display:inline-flex;align-items:center;gap:0.25rem">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg>
+                    {{ t.matchOpen }}
+                  </span>
+                </td>
+
+                <!-- Total -->
+                <td style="text-align:end">
+                  <div style="font-weight:700;font-size:0.82rem;color:var(--cv-blue-text)">
+                    {{ fmt(inv.total) }}
+                    <span style="font-size:0.63rem;font-weight:400;color:var(--cv-text-muted)">{{ inv.currency }}</span>
+                  </div>
+                  <div v-if="inv.currency !== 'EGP'" style="font-size:0.62rem;color:var(--cv-text-muted)">
+                    ≈ {{ fmt(inv.total_egp) }} {{ t.egp }}
+                  </div>
+                </td>
+
+                <!-- Paid -->
+                <td style="text-align:end">
+                  <div style="font-size:0.82rem;font-weight:600;color:var(--cv-success-text)">{{ fmt(inv.paid) }}</div>
+                </td>
+
+                <!-- Balance -->
+                <td style="text-align:end">
+                  <div style="font-size:0.82rem;font-weight:700"
+                    :style="`color:${parseFloat(inv.balance)>0?'var(--cv-green-bright)':'var(--cv-success-text)'}`">
+                    {{ fmt(inv.balance) }}
+                  </div>
+                  <div v-if="inv.currency !== 'EGP'" style="font-size:0.62rem;color:var(--cv-text-muted)">
+                    ≈ {{ fmt(inv.balance_egp) }} {{ t.egp }}
+                  </div>
+                  <!-- FX rate sub-line -->
+                  <div v-if="inv.currency !== 'EGP'"
+                    style="font-size:0.6rem;color:var(--cv-blue-text);font-weight:600;margin-top:0.1rem">
+                    1 {{ inv.currency }} = {{ fmtRate(inv.exchange_rate) }} {{ t.egp }}
+                  </div>
+                </td>
+
+                <!-- Due date -->
+                <td>
+                  <span v-if="inv.due_date"
+                    style="font-size:0.75rem"
+                    :style="`color:${isPastDue(inv.due_date) && inv.status !== 'paid' ? 'var(--cv-danger-text)' : 'var(--cv-text-secondary)'}`">
+                    {{ inv.due_date }}
+                  </span>
+                  <span v-else style="font-size:0.72rem;color:var(--cv-text-muted)">—</span>
+                </td>
+
+                <!-- Actions -->
+                <td>
+                  <div class="flex gap-1 justify-end">
+                    <Link :href="route('ar-invoices.show', inv.id)"
+                      class="cv-btn cv-btn-ghost cv-btn-xs"
+                      style="padding:0.2rem 0.45rem"
+                      :title="t.view">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </Link>
+                    <Link v-if="canEdit(inv)" :href="route('ar-invoices.edit', inv.id)"
+                      class="cv-btn cv-btn-ghost cv-btn-xs"
+                      style="padding:0.2rem 0.45rem"
+                      :title="t.edit">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </Link>
+                    <button v-if="canDelete(inv)"
+                      class="cv-btn cv-btn-ghost cv-btn-xs"
+                      style="padding:0.2rem 0.45rem;color:var(--cv-danger-text)"
+                      :title="t.delete"
+                      @click="openDelete(inv)">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    </button>
+                  </div>
+                </td>
+
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination -->
+        <div v-if="invoices.last_page > 1"
+          class="flex items-center justify-between flex-wrap gap-2"
+          style="padding:0.75rem 1.25rem;border-top:1px solid var(--cv-border)">
+          <div style="font-size:0.75rem;color:var(--cv-text-muted)">
+            {{ t.showing }} {{ invoices.from }}–{{ invoices.to }} {{ t.of }} {{ invoices.total }}
           </div>
-
-          <div class="flex" style="padding:0 1.25rem 0.75rem;border-bottom:1px solid var(--cv-border);gap:0">
-            <div style="flex:1;padding-inline-end:0.75rem">
-              <div style="font-size:0.62rem;color:var(--cv-text-muted)">{{ t.total }}</div>
-              <div style="font-size:0.92rem;font-weight:700;color:var(--cv-blue-text)">
-                {{ fmt(inv.total) }}
-                <span style="font-size:0.62rem;font-weight:400;color:var(--cv-text-muted)">{{ inv.currency }}</span>
-              </div>
-              <div v-if="inv.currency !== 'EGP'" style="font-size:0.63rem;color:var(--cv-text-muted)">≈ {{ fmt(inv.total_egp) }} {{ t.egp }}</div>
-            </div>
-            <div style="flex:1;border-inline-start:1px solid var(--cv-border);padding-inline-start:0.75rem;padding-inline-end:0.75rem">
-              <div style="font-size:0.62rem;color:var(--cv-text-muted)">{{ t.paid }}</div>
-              <div style="font-size:0.92rem;font-weight:600;color:var(--cv-success-text)">{{ fmt(inv.paid) }}</div>
-            </div>
-            <div style="flex:1;border-inline-start:1px solid var(--cv-border);padding-inline-start:0.75rem">
-              <div style="font-size:0.62rem;color:var(--cv-text-muted)">{{ t.balance }}</div>
-              <div style="font-size:0.92rem;font-weight:700" :style="`color:${parseFloat(inv.balance)>0?'var(--cv-green-bright)':'var(--cv-success-text)'}`">
-                {{ fmt(inv.balance) }}
-              </div>
-              <div v-if="inv.currency !== 'EGP'" style="font-size:0.63rem;color:var(--cv-text-muted)">≈ {{ fmt(inv.balance_egp) }} {{ t.egp }}</div>
-            </div>
-          </div>
-
-          <!-- FX pill -->
-          <div v-if="inv.currency !== 'EGP'"
-            style="padding:0.38rem 1.25rem;background:var(--cv-blue-light);border-bottom:1px solid var(--cv-blue-border)">
-            <span style="font-size:0.63rem;color:var(--cv-blue-text);font-weight:600">
-              1 {{ inv.currency }} = {{ fmtRate(inv.exchange_rate) }} {{ t.egp }}
-            </span>
-          </div>
-
-          <div class="flex items-center justify-between" style="padding:0.6rem 1.25rem">
-            <div style="font-size:0.72rem;color:var(--cv-text-muted)">
-              <span v-if="inv.due_date">{{ t.due }}:
-                <span :style="`font-weight:600;color:${isPastDue(inv.due_date)?'var(--cv-danger-text)':'var(--cv-text-secondary)'}`">{{ inv.due_date }}</span>
-              </span>
-              <span v-else>{{ t.noDue }}</span>
-            </div>
-            <div class="flex gap-1">
-              <Link :href="route('ar-invoices.show', inv.id)" class="cv-action-btn cv-action-btn-blue" :title="t.view">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              </Link>
-              <Link v-if="canEdit(inv)" :href="route('ar-invoices.edit', inv.id)" class="cv-action-btn" :title="t.edit">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-              </Link>
-              <button v-if="canDelete(inv)" class="cv-action-btn cv-action-btn-danger" :title="t.delete" @click="openDelete(inv)">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-              </button>
-            </div>
+          <div class="flex gap-1 flex-wrap">
+            <Link v-for="link in invoices.links" :key="link.label"
+              :href="link.url || '#'"
+              class="cv-btn cv-btn-ghost cv-btn-xs"
+              :class="{ 'cv-btn-amber': link.active }"
+              :style="!link.url ? 'opacity:0.35;pointer-events:none' : ''"
+              preserve-state
+              v-html="link.label" />
           </div>
         </div>
       </div>
 
-      <div v-else class="cv-card" style="text-align:center;padding:3.5rem 2rem">
-        <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--cv-text-muted);margin:0 auto 1rem"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M12 12v6"/><path d="M9 15l3-3 3 3"/></svg>
-        <div style="color:var(--cv-text-muted);font-size:0.875rem;margin-bottom:1rem">{{ t.empty }}</div>
-        <Link v-if="canCreate" :href="route('ar-invoices.create')" class="cv-btn cv-btn-amber cv-btn-sm" style="display:inline-flex">{{ t.newInvoice }}</Link>
-      </div>
+    </div><!-- /cv-page -->
 
-      <div v-if="invoices.last_page > 1" class="flex justify-center gap-2 mt-5 flex-wrap">
-        <Link v-for="p in invoices.links" :key="p.label" :href="p.url || '#'"
-          class="cv-btn cv-btn-ghost cv-btn-sm"
-          :style="p.active ? 'background:var(--cv-green-dim);color:var(--cv-green-bright);border-color:var(--cv-green-border)' : p.url ? '' : 'opacity:0.35;pointer-events:none'"
-          v-html="p.label"
-        />
-      </div>
-    </div>
-
+    <!-- Delete modal -->
     <Teleport to="body">
       <div v-if="deleteTarget" class="cv-modal-backdrop" @click.self="deleteTarget = null">
-        <div class="cv-modal cv-modal-sm">
+        <div class="cv-modal" style="max-width:420px">
           <div class="cv-modal-header">
-            <div style="text-align:center;width:100%">
-              <div style="width:48px;height:48px;border-radius:50%;background:var(--cv-danger-bg);border:1.5px solid var(--cv-danger-border);display:flex;align-items:center;justify-content:center;margin:0 auto 0.75rem">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--cv-danger-text)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            <div class="flex items-center gap-2">
+              <div style="width:32px;height:32px;border-radius:50%;background:var(--cv-danger-bg);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--cv-danger-text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               </div>
               <div style="font-weight:700;font-size:1rem;color:var(--cv-text-primary)">{{ t.deleteTitle }}</div>
             </div>
@@ -196,8 +295,9 @@
         </div>
       </div>
     </Teleport>
+
   </div>
-  </AuthenticatedLayout>
+  
 </template>
 
 <script setup>
@@ -206,6 +306,8 @@ import { Link, router, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
+
+defineOptions({ layout: AuthenticatedLayout })
 
 const props = defineProps({
   invoices:  { type: Object, required: true },
@@ -221,10 +323,11 @@ const authUser     = computed(() => page.props.auth?.user)
 const isSuperAdmin = computed(() => !!authUser.value?.is_super_admin)
 
 const { can } = usePermissions()
-const canCreate = computed(() => isSuperAdmin.value || can('create ar_invoices'))
-const canEditP  = computed(() => isSuperAdmin.value || can('edit ar_invoices'))
+const canCreate  = computed(() => isSuperAdmin.value || can('create ar_invoices'))
+const canEditP   = computed(() => isSuperAdmin.value || can('edit ar_invoices'))
 const canDeleteP = computed(() => isSuperAdmin.value || can('delete ar_invoices'))
 
+// ── i18n ───────────────────────────────────────────────────────────
 const i18n = {
   en: {
     eyebrow:'Accounting', title:'AR Invoices', sub:'Customer invoices and receivables management',
@@ -235,10 +338,14 @@ const i18n = {
     filterCompany:'Company', allCompanies:'All Companies',
     filterCustomer:'Customer', allCustomers:'All Customers',
     filterStatus:'Status', allStatuses:'All Statuses',
+    filterMatch:'Collection', allMatch:'All',
+    matchCollected:'Collected', matchPartial:'Partial', matchOpen:'Uncollected',
     from:'From', to:'To', clear:'Clear',
-    total:'Total', paid:'Received', balance:'Outstanding',
-    due:'Due', noDue:'No due date',
+    colRef:'Reference', colDate:'Date', colCustomer:'Customer', colStatus:'Status',
+    colMatch:'Collection', colTotal:'Total', colPaid:'Received', colBalance:'Balance',
+    colDue:'Due Date',
     view:'View', edit:'Edit', delete:'Delete',
+    showing:'Showing', of:'of',
     empty:'No AR invoices found. Create your first customer invoice.',
     deleteTitle:'Delete Invoice', deleteMsg:'Delete invoice',
     cancel:'Cancel', confirmDelete:'Delete', deleting:'Deleting…',
@@ -253,10 +360,14 @@ const i18n = {
     filterCompany:'الشركة', allCompanies:'كل الشركات',
     filterCustomer:'العميل', allCustomers:'كل العملاء',
     filterStatus:'الحالة', allStatuses:'كل الحالات',
+    filterMatch:'التحصيل', allMatch:'الكل',
+    matchCollected:'محصّلة', matchPartial:'جزئي', matchOpen:'غير محصّلة',
     from:'من', to:'إلى', clear:'مسح',
-    total:'الإجمالي', paid:'المحصّل', balance:'المتبقي',
-    due:'الاستحقاق', noDue:'بدون تاريخ استحقاق',
+    colRef:'المرجع', colDate:'التاريخ', colCustomer:'العميل', colStatus:'الحالة',
+    colMatch:'التحصيل', colTotal:'الإجمالي', colPaid:'المحصّل', colBalance:'المتبقي',
+    colDue:'الاستحقاق',
     view:'عرض', edit:'تعديل', delete:'حذف',
+    showing:'عرض', of:'من',
     empty:'لا توجد فواتير عملاء. أنشئ أول فاتورة.',
     deleteTitle:'حذف الفاتورة', deleteMsg:'حذف الفاتورة',
     cancel:'إلغاء', confirmDelete:'حذف', deleting:'جارٍ الحذف…',
@@ -265,6 +376,7 @@ const i18n = {
 }
 const t = computed(() => i18n[lang.value] ?? i18n.en)
 
+// ── Aging config ───────────────────────────────────────────────────
 const agingBuckets = computed(() => [
   { key:'current', label:t.value.aging_current, color:'var(--cv-success-text)' },
   { key:'1_30',    label:t.value.aging_1_30,    color:'var(--cv-blue-text)' },
@@ -272,48 +384,83 @@ const agingBuckets = computed(() => [
   { key:'61_90',   label:t.value.aging_61_90,   color:'var(--cv-warning-text)' },
   { key:'over_90', label:t.value.aging_over_90, color:'var(--cv-danger-text)' },
 ])
+
+// ── Status helpers ─────────────────────────────────────────────────
 const statusOptions = computed(() => Object.entries(t.value.statuses).map(([v,l]) => ({ value:v, label:l })))
 function statusLabel(s) { return t.value.statuses[s] ?? s }
-function badgeClass(s) {
-  return { open:'cv-badge-green', partially_paid:'cv-badge-amber', paid:'cv-badge-green', overdue:'cv-badge-danger', cancelled:'cv-badge-neutral' }[s] ?? 'cv-badge-neutral'
+function statusBadgeClass(s) {
+  return {
+    open:'cv-badge-green',
+    partially_paid:'cv-badge-amber',
+    paid:'cv-badge-green',
+    overdue:'cv-badge-danger',
+    cancelled:'cv-badge-neutral',
+  }[s] ?? 'cv-badge-neutral'
 }
-function stripeClass(s) {
-  return { open:'cv-card-stripe-green', partially_paid:'cv-card-stripe-amber', paid:'cv-card-stripe-green', overdue:'cv-card-stripe-red', cancelled:'cv-card-stripe-muted' }[s] ?? ''
-}
+
+// ── Match filter (client-side only) ───────────────────────────────
+// matchFilter is intentionally NOT included in the router.get() call
+// in applyFilters() — it filters the already-paginated page of data only.
+const matchFilter = ref('')
+
+const visibleRows = computed(() => {
+  if (!matchFilter.value) return props.invoices.data
+  return props.invoices.data.filter(inv => {
+    if (matchFilter.value === 'collected') return inv.status === 'paid'
+    if (matchFilter.value === 'partial')   return inv.payment_count > 0 && inv.status !== 'paid'
+    if (matchFilter.value === 'open')      return inv.payment_count === 0 && inv.status !== 'paid'
+    return true
+  })
+})
+
+// ── Utility ────────────────────────────────────────────────────────
 function arRef(id) { return 'AR-' + String(id).padStart(5,'0') }
 function isPastDue(d) { return d && d < new Date().toISOString().slice(0,10) }
 function canEdit(inv)   { return canEditP.value && !['paid','cancelled'].includes(inv.status) }
 function canDelete(inv) { return canDeleteP.value && inv.status === 'open' && parseFloat(inv.paid) === 0 }
 function fmt(v) {
-  const num = parseFloat(v)||0
+  const num = parseFloat(v) || 0
   return lang.value === 'ar'
-    ? num.toLocaleString('ar-EG',{minimumFractionDigits:2,maximumFractionDigits:2})
-    : num.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
+    ? num.toLocaleString('ar-EG', { minimumFractionDigits:2, maximumFractionDigits:2 })
+    : num.toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 })
 }
 function fmtRate(v) {
-  const num = parseFloat(v)||1
-  return num.toLocaleString(lang.value==='ar'?'ar-EG':'en-US',{minimumFractionDigits:4,maximumFractionDigits:6})
+  const num = parseFloat(v) || 1
+  return num.toLocaleString(lang.value === 'ar' ? 'ar-EG' : 'en-US', { minimumFractionDigits:4, maximumFractionDigits:6 })
 }
 
-const af = ref({ company_id:props.filters?.company_id??'', customer_id:props.filters?.customer_id??'', status:props.filters?.status??'', date_from:props.filters?.date_from??'', date_to:props.filters?.date_to??'' })
+// ── Filters ────────────────────────────────────────────────────────
+const af = ref({
+  company_id:  props.filters?.company_id  ?? '',
+  customer_id: props.filters?.customer_id ?? '',
+  status:      props.filters?.status      ?? '',
+  date_from:   props.filters?.date_from   ?? '',
+  date_to:     props.filters?.date_to     ?? '',
+})
+
 function applyFilters() {
-  const q = {}; Object.entries(af.value).forEach(([k,v])=>{ if(v!=='') q[k]=v })
+  // matchFilter is client-side only — never sent to the server
+  const q = {}
+  Object.entries(af.value).forEach(([k,v]) => { if (v !== '') q[k] = v })
   router.get(route('ar-invoices.index'), q, { preserveState:true, replace:true })
 }
+
 function clearFilters() {
   af.value = { company_id:'', customer_id:'', status:'', date_from:'', date_to:'' }
+  matchFilter.value = ''
   router.get(route('ar-invoices.index'))
 }
 
+// ── Delete ─────────────────────────────────────────────────────────
 const deleteTarget = ref(null)
-const deleting = ref(false)
+const deleting     = ref(false)
 function openDelete(inv) { deleteTarget.value = inv }
 function doDelete() {
   if (!deleteTarget.value) return
   deleting.value = true
   router.delete(route('ar-invoices.destroy', deleteTarget.value.id), {
-    onSuccess:()=>{ deleteTarget.value=null; deleting.value=false },
-    onError:()=>{ deleting.value=false },
+    onSuccess: () => { deleteTarget.value = null; deleting.value = false },
+    onError:   () => { deleting.value = false },
   })
 }
 </script>

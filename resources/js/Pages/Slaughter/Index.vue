@@ -12,6 +12,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const { locale: lang, isRtl, n,today } = useLocale()
 
 const props = defineProps({
@@ -224,7 +226,7 @@ const fmtW = (n) => n == null ? '—' : Number(n).toLocaleString(lang.value === 
 </script>
 
 <template>
-    <AuthenticatedLayout>
+   
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
             <!-- ── Hero ─────────────────────────────────────────────── -->
@@ -566,7 +568,7 @@ const fmtW = (n) => n == null ? '—' : Number(n).toLocaleString(lang.value === 
             </Transition>
 
         </div>
-    </AuthenticatedLayout>
+    
 </template>
 
 <style scoped>

@@ -14,6 +14,8 @@ import AuthenticatedLayout                  from '@/Layouts/AuthenticatedLayout.
 import { useLocale }                        from '@/Composables/useLocale'
 import { usePermissions }                   from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 // ── Auth & permissions ────────────────────────────────────────────
 const { isSuperAdmin, can } = usePermissions()
 const canView = computed(() => isSuperAdmin.value || can('view reports'))
@@ -305,7 +307,7 @@ function printPage() { window.print() }
 </script>
 
 <template>
-    <AuthenticatedLayout>
+   
         <div class="reports-root" :dir="isRtl ? 'rtl' : 'ltr'">
 
             <!-- ── Hero ──────────────────────────────────────────── -->
@@ -1056,7 +1058,7 @@ function printPage() { window.print() }
 
             </div><!-- end cv-page -->
         </div><!-- end reports-root -->
-    </AuthenticatedLayout>
+    
 </template>
 
 <style scoped>

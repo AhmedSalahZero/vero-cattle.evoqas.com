@@ -89,9 +89,10 @@ class FixedAssetController extends Controller
         );
 
         return Inertia::render('FixedAssets/CreateEdit', [
-            'farms'    => $this->availableFarms($authUser),
-            'accounts' => $this->availableAccounts($authUser),
-            'mode'     => 'create',                          // ✅ FIX 1 — added
+            'farms'            => $this->availableFarms($authUser),
+            'accounts'         => $this->availableAccounts($authUser),
+            'payment_accounts' => $this->availablePaymentAccounts($authUser),
+            'mode'             => 'create',
         ]);
     }
 
@@ -118,11 +119,19 @@ class FixedAssetController extends Controller
                 : $request->input('company_id'))
             : $authUser->company_id;
 
+        // Land never depreciates — enforce server-side regardless of form input
+        if (($validated['category'] ?? '') === 'land') {
+            $validated['salvage_value']        = 0;
+            $validated['depreciation_method']  = 'none';
+            $validated['useful_life_months']   = null;
+            $validated['db_rate']              = null;
+        }
+
         DB::transaction(function () use ($validated, $companyId, $authUser) {
             $asset = FixedAsset::create([
                 ...$validated,
-                'company_id'    => $companyId,
-                'net_book_value' => $validated['purchase_cost'] ?? 0, // ✅ FA-S2 FIX: initial NBV = purchase cost
+                'company_id' => $companyId,
+                // net_book_value is a MySQL generated column — never write it explicitly
             ]);
 
             // Auto-post purchase journal entry if accounting is standalone
@@ -184,10 +193,11 @@ class FixedAssetController extends Controller
             __('messages.cannot_edit_disposed_asset'));
 
         return Inertia::render('FixedAssets/CreateEdit', [
-            'asset'    => $this->formatAsset($fixedAsset),
-            'farms'    => $this->availableFarms($authUser),
-            'accounts' => $this->availableAccounts($authUser),
-            'mode'     => 'edit',                            // ✅ FIX 1 — added
+            'asset'            => $this->formatAsset($fixedAsset),
+            'farms'            => $this->availableFarms($authUser),
+            'accounts'         => $this->availableAccounts($authUser),
+            'payment_accounts' => $this->availablePaymentAccounts($authUser),
+            'mode'             => 'edit',
         ]);
     }
 
@@ -212,7 +222,50 @@ class FixedAssetController extends Controller
 
         $validated = $this->validateAsset($request, $fixedAsset->id, $hasPostedLines);
 
-        $fixedAsset->update($validated);
+        // Land never depreciates — enforce server-side
+        if (($validated['category'] ?? $fixedAsset->category) === 'land') {
+            $validated['salvage_value']       = 0;
+            $validated['depreciation_method'] = 'none';
+            $validated['useful_life_months']  = null;
+            $validated['db_rate']             = null;
+        }
+
+        // net_book_value is a MySQL generated column — never write it explicitly
+        unset($validated['net_book_value']);
+
+        // ── Purchase JE correction ─────────────────────────────────────────
+        // Do NOT rely on 'did payment_account_id change in this request'.
+        // The field may have been saved in a previous edit while the JE
+        // correction never fired. Instead: after saving, read the actual JE
+        // credit line and compare it to the asset's payment_account_id and
+        // purchase_cost. Correct unconditionally if either differs.
+        $self = $this;
+
+        DB::transaction(function () use ($fixedAsset, $validated, $authUser, $self) {
+            $fixedAsset->update($validated);
+            $fresh = $fixedAsset->fresh();
+
+            if (!$fresh->payment_account_id) {
+                return;
+            }
+
+            // Check whether the existing JE credit line already matches
+            // both the payment account AND the current purchase cost.
+            $jeIsCorrect = false;
+            if ($fresh->journal_entry_id) {
+                $creditLine = JournalLine::where('entry_id', $fresh->journal_entry_id)
+                    ->where('account_id', $fresh->payment_account_id)
+                    ->where('credit', '>', 0)
+                    ->first();
+
+                $jeIsCorrect = $creditLine &&
+                    bccomp((string) $creditLine->credit, (string) $fresh->purchase_cost, 2) === 0;
+            }
+
+            if (!$jeIsCorrect) {
+                $self->correctPurchaseJournalEntry($fresh, $authUser);
+            }
+        });
 
         return redirect()->route('fixed-assets.show', $fixedAsset->id)
             ->with('success', __('messages.fixed_asset_updated'));
@@ -673,40 +726,57 @@ class FixedAssetController extends Controller
         }
     }
 
-    // ── Post purchase journal entry on asset creation ─────────────
-    // Dr Fixed Asset Account / Cr Accounts Payable (2100)
+    // ── Post purchase journal entry on asset creation ─────────────────
+    // Dr  Fixed Asset Account        (asset_account_id)
+    // Cr  Payment Account            (payment_account_id — user selected:
+    //                                  Cash 14xx, Bank 15xx, or Payables 21xx)
     private function postPurchaseJournalEntry(FixedAsset $asset, $authUser): void
     {
-        $apAccount = Account::where('company_id', $asset->company_id)
-            ->where('code', '2100')   // Accounts Payable
+        // payment_account_id is required in validateAsset() so it will always
+        // be set on new assets. The nullable FK exists only for legacy rows
+        // created before this column was added.
+        if (!$asset->payment_account_id) {
+            session()->flash('warning', __('messages.fa_purchase_je_skipped_missing_account'));
+            return;
+        }
+
+        $paymentAccount = Account::find($asset->payment_account_id);
+
+        if (!$paymentAccount) {
+            session()->flash('warning', __('messages.fa_purchase_je_skipped_missing_account'));
+            return;
+        }
+
+        // Guard: fiscal year must exist and be open for the purchase date
+        $fiscalYear = FiscalYear::where('company_id', $asset->company_id)
+            ->where('status', 'open')
+            ->where('start_date', '<=', $asset->purchase_date)
+            ->where('end_date',   '>=', $asset->purchase_date)
             ->first();
 
-        if (!$apAccount) {
-            // ✅ FA-P5-1 FIX: surface the skip as a warning — never fail silently.
-            // The asset is created correctly; only the accounting trail is missing.
-            // Accountant must seed account 2100 (Accounts Payable) and manually
-            // post the purchase JE from the asset's Show page.
-            session()->flash('warning', __('messages.fa_purchase_je_skipped_missing_account'));
+        if (!$fiscalYear) {
+            session()->flash('warning', __('messages.fa_purchase_je_skipped_no_fiscal_year'));
             return;
         }
 
         $je = JournalEntry::create([
             'company_id'     => $asset->company_id,
+            'fiscal_year_id' => $fiscalYear->id,
             'date'           => $asset->purchase_date,
             'reference'      => 'FA-' . $asset->asset_code,
-            'description'    => 'Purchase of fixed asset: ' . $asset->name_en,
+            'description'    => 'Purchase of fixed asset: ' . ($asset->name_en ?? $asset->name_ar),
             'period'         => (int) $asset->purchase_date->format('n'),
             'status'         => 'posted',
             'source_type'    => FixedAsset::class,
             'source_id'      => $asset->id,
-            'entry_type'     => 'auto',
+            'entry_type'     => 'depreciation',   // closest available entry_type for asset transactions
             'total_debit'    => $asset->purchase_cost,
             'total_credit'   => $asset->purchase_cost,
             'posted_by'      => $authUser->id,
             'posted_at'      => now(),
         ]);
 
-        // Dr Fixed Asset Account
+        // Dr — Fixed Asset Account (asset increases)
         JournalLine::create([
             'entry_id'   => $je->id,
             'account_id' => $asset->asset_account_id,
@@ -714,14 +784,121 @@ class FixedAssetController extends Controller
             'credit'     => 0,
         ]);
 
-        // Cr Accounts Payable
+        // Cr — Payment Account (cash paid / bank transferred / liability created)
         JournalLine::create([
             'entry_id'   => $je->id,
-            'account_id' => $apAccount->id,
+            'account_id' => $paymentAccount->id,
             'debit'      => 0,
             'credit'     => $asset->purchase_cost,
         ]);
 
+        $asset->update(['journal_entry_id' => $je->id]);
+    }
+
+    // ── Correct purchase JE when payment account changes on edit ─────
+    //
+    // Two cases:
+    //   A) A purchase JE was already posted (journal_entry_id is set)
+    //      → reverse the old JE, post a new one to the new account
+    //   B) No JE exists yet (e.g. no open fiscal year at creation time)
+    //      → post a fresh JE to the newly selected account
+    //
+    protected function correctPurchaseJournalEntry(FixedAsset $asset, $authUser): void
+    {
+        if (!$asset->payment_account_id) {
+            return;
+        }
+
+        // For a correction/reversal entry, use any open fiscal year —
+        // pick the most recent one by end_date. Do NOT filter by today's date
+        // or the purchase date: the accountant may be correcting a legacy asset
+        // while the current calendar year has no open FY yet (e.g. FY2025 is
+        // open but today is 2026 — date-range filtering would find nothing).
+        $fiscalYear = FiscalYear::where('company_id', $asset->company_id)
+            ->where('status', 'open')
+            ->orderBy('end_date', 'desc')
+            ->first();
+
+        if (!$fiscalYear) {
+            session()->flash('warning', __('messages.fa_purchase_je_skipped_no_fiscal_year'));
+            return;
+        }
+
+        $paymentAccount = Account::find($asset->payment_account_id);
+        if (!$paymentAccount) {
+            return;
+        }
+
+        // ── Case A: reverse the existing purchase JE ──────────────
+        if ($asset->journal_entry_id) {
+            $original = JournalEntry::with('lines')->find($asset->journal_entry_id);
+
+            if ($original) {
+                $reversal = JournalEntry::create([
+                    'company_id'     => $asset->company_id,
+                    'fiscal_year_id' => $fiscalYear->id,
+                    'date'           => now()->toDateString(),
+                    'reference'      => 'REV-FA-' . $asset->asset_code,
+                    'description'    => 'Reversal of purchase JE: ' . ($asset->name_en ?? $asset->name_ar) . ' — payment account correction',
+                    'period'         => (int) now()->format('n'),
+                    'status'         => 'posted',
+                    'source_type'    => FixedAsset::class,
+                    'source_id'      => $asset->id,
+                    'entry_type'     => 'depreciation',
+                    'total_debit'    => $original->total_credit,
+                    'total_credit'   => $original->total_debit,
+                    'reversal_of_id' => $original->id,
+                    'posted_by'      => $authUser->id,
+                    'posted_at'      => now(),
+                ]);
+
+                // Mirror lines with debit/credit swapped
+                foreach ($original->lines as $line) {
+                    JournalLine::create([
+                        'entry_id'   => $reversal->id,
+                        'account_id' => $line->account_id,
+                        'debit'      => $line->credit,
+                        'credit'     => $line->debit,
+                    ]);
+                }
+            }
+        }
+
+        // ── Case A + B: post fresh JE to the new payment account ──
+        $je = JournalEntry::create([
+            'company_id'     => $asset->company_id,
+            'fiscal_year_id' => $fiscalYear->id,
+            'date'           => now()->toDateString(),
+            'reference'      => 'FA-' . $asset->asset_code . '-ADJ',
+            'description'    => 'Purchase JE correction: ' . ($asset->name_en ?? $asset->name_ar),
+            'period'         => (int) now()->format('n'),
+            'status'         => 'posted',
+            'source_type'    => FixedAsset::class,
+            'source_id'      => $asset->id,
+            'entry_type'     => 'depreciation',
+            'total_debit'    => $asset->purchase_cost,
+            'total_credit'   => $asset->purchase_cost,
+            'posted_by'      => $authUser->id,
+            'posted_at'      => now(),
+        ]);
+
+        // Dr — Fixed Asset Account
+        JournalLine::create([
+            'entry_id'   => $je->id,
+            'account_id' => $asset->asset_account_id,
+            'debit'      => $asset->purchase_cost,
+            'credit'     => 0,
+        ]);
+
+        // Cr — New Payment Account
+        JournalLine::create([
+            'entry_id'   => $je->id,
+            'account_id' => $paymentAccount->id,
+            'debit'      => 0,
+            'credit'     => $asset->purchase_cost,
+        ]);
+
+        // Point asset to the latest purchase JE
         $asset->update(['journal_entry_id' => $je->id]);
     }
 
@@ -751,18 +928,24 @@ class FixedAssetController extends Controller
         bool $lockFinancials = false
     ): array {
         $rules = [
-            'farm_id'         => 'nullable|exists:farms,id',
-            'asset_code'      => [
+            'farm_id'            => 'nullable|exists:farms,id',
+            'asset_code'         => [
                 'required', 'string', 'max:255',
-                Rule::unique('fixed_assets', 'asset_code')->ignore($ignoreId),
+                Rule::unique('fixed_assets', 'asset_code')
+                    ->ignore($ignoreId)
+                    ->whereNull('deleted_at'),
             ],
-            'name_en'         => 'nullable|string|max:255',
-            'name_ar'         => 'nullable|string|max:255',
-            'category'        => ['required', Rule::in(['land', 'building', 'vehicle', 'equipment', 'furniture', 'other'])],
-            'purchase_date'   => 'required|date',
-            'in_service_date' => 'nullable|date|after_or_equal:purchase_date',
-            'status'          => ['nullable', Rule::in(['active', 'fully_depreciated', 'disposed', 'impaired'])],
-            'notes'           => 'nullable|string',
+            'name_en'            => 'nullable|string|max:255',
+            'name_ar'            => 'nullable|string|max:255',
+            'category'           => ['required', Rule::in(['land', 'building', 'vehicle', 'equipment', 'furniture', 'other'])],
+            'purchase_date'      => 'required|date',
+            'in_service_date'    => 'nullable|date|after_or_equal:purchase_date',
+            'status'             => ['nullable', Rule::in(['active', 'fully_depreciated', 'disposed', 'impaired'])],
+            'notes'              => 'nullable|string',
+            // payment_account_id is outside the lockFinancials block intentionally.
+            // Changing the credit account is always allowed; update() handles
+            // the reversal + re-post of the purchase JE transparently.
+            'payment_account_id' => 'nullable|exists:accounts,id',
         ];
 
         // Financial fields locked once depreciation has been posted
@@ -830,6 +1013,7 @@ class FixedAssetController extends Controller
             ] : null,
             'acc_dep_account_id'       => $asset->acc_dep_account_id,
             'dep_expense_account_id'   => $asset->dep_expense_account_id,
+            'payment_account_id'       => $asset->payment_account_id,
             'status'                   => $asset->status,
             'disposal_date'            => $asset->disposal_date?->toDateString(),
             'disposal_proceeds'        => $asset->disposal_proceeds,
@@ -897,6 +1081,31 @@ class FixedAssetController extends Controller
     {
         $query = Account::where('is_active', true)
                         ->where('allow_direct_posting', true);
+
+        if (!$authUser->is_super_admin) {
+            $query->where('company_id', $authUser->company_id);
+        }
+
+        return $query->orderBy('code')
+                     ->get(['id', 'code', 'name_en', 'name_ar', 'type']);
+    }
+
+    // Payment accounts for the purchase JE credit side.
+    // Intentionally does NOT filter by allow_direct_posting — cash and bank
+    // accounts (14xx, 15xx) are often marked allow_direct_posting=false because
+    // they are managed through the Payments module, but they are valid credit
+    // accounts for a fixed asset purchase journal entry.
+    private function availablePaymentAccounts($authUser): \Illuminate\Support\Collection
+    {
+        $query = Account::where('is_active', true)
+                        ->where(function ($q) {
+                            $q->whereIn('type', ['asset', 'liability'])
+                              ->where(function ($q2) {
+                                  $q2->whereRaw("LEFT(code, 2) IN ('14', '15')")  // cash & bank
+                                     ->orWhereRaw("LEFT(code, 2) IN ('21', '22')") // payables
+                                     ->orWhere('allow_direct_posting', true);       // any other posting account
+                              });
+                        });
 
         if (!$authUser->is_super_admin) {
             $query->where('company_id', $authUser->company_id);

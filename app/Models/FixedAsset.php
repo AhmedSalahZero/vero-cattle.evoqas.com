@@ -49,6 +49,7 @@ class FixedAsset extends Model
         'asset_account_id',
         'acc_dep_account_id',
         'dep_expense_account_id',
+        'payment_account_id',
         'status',
         'disposal_date',
         'disposal_proceeds',
@@ -96,6 +97,11 @@ class FixedAsset extends Model
     public function depreciationExpenseAccount(): BelongsTo
     {
         return $this->belongsTo(Account::class, 'dep_expense_account_id');
+    }
+
+    public function paymentAccount(): BelongsTo
+    {
+        return $this->belongsTo(Account::class, 'payment_account_id');
     }
 
     // ── Journal entries ───────────────────────────────────────────

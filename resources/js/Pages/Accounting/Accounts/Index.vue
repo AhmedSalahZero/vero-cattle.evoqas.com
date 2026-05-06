@@ -1,5 +1,5 @@
 <template>
-    <AuthenticatedLayout>
+    
 
         <div class="cv-page-hero">
             <div class="cv-page-hero-eyebrow">{{ t({ en: 'Accounting', ar: 'المحاسبة' }) }}</div>
@@ -635,7 +635,7 @@
             </div>
         </Transition>
 
-    </AuthenticatedLayout>
+    
 </template>
 
 <script setup>
@@ -645,6 +645,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import CoaSection from '@/Components/CoaSection.vue'
 import CoaGroup   from '@/Components/CoaGroup.vue'
+
+defineOptions({ layout: AuthenticatedLayout })
 
 const props = defineProps({
     accounts:          { type: Array,  default: () => [] },

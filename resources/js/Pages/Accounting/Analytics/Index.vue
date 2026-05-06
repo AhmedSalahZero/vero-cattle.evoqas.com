@@ -1,5 +1,5 @@
 <template>
-  <AuthenticatedLayout>
+ 
     <div class="cv-page-hero">
       <div class="cv-page-hero-eyebrow">{{ ui.eyebrow }}</div>
       <div class="cv-page-hero-title">{{ ui.title }}</div>
@@ -514,7 +514,7 @@
       </div>
 
     </div><!-- end cv-page -->
-  </AuthenticatedLayout>
+  
 </template>
 
 <script setup>
@@ -522,6 +522,8 @@ import { ref, computed } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
+
+defineOptions({ layout: AuthenticatedLayout })
 
 // ── Props ──────────────────────────────────────────────────────────
 const props = defineProps({

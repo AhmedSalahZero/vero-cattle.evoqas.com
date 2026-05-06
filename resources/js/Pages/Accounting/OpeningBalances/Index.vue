@@ -12,6 +12,8 @@ import { useForm, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 // ── Props ─────────────────────────────────────────────────────────
 const props = defineProps({
     entries:     { type: Array,  default: () => [] },
@@ -77,7 +79,7 @@ const totalDraft  = computed(() => props.entries.filter(e => e.status === 'draft
 </script>
 
 <template>
-    <AuthenticatedLayout>
+    
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
             <!-- ══ HERO ══════════════════════════════════════════════ -->
@@ -347,7 +349,7 @@ const totalDraft  = computed(() => props.entries.filter(e => e.status === 'draft
 
             </div><!-- /cv-page -->
         </div>
-    </AuthenticatedLayout>
+   
 </template>
 
 <style scoped>

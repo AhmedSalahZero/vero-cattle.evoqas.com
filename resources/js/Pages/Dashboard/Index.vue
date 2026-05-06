@@ -18,7 +18,8 @@ import { ref, computed } from 'vue'
 import { router, usePage, Link } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 
-// ── Props ─────────────────────────────────────────────────────────
+defineOptions({ layout: AuthenticatedLayout })
+
 const props = defineProps({
     dashboard:        { type: Object,  required: true },
     farms:            { type: Array,   default: () => [] },
@@ -26,6 +27,7 @@ const props = defineProps({
     auth_role:        { type: String,  default: '' },
     can_view_reports: { type: Boolean, default: false },
 })
+
 
 // ── Inertia shared props ──────────────────────────────────────────
 const page = usePage()
@@ -126,15 +128,7 @@ const generatedAt = computed(() => {
 </script>
 
 <template>
-    <AuthenticatedLayout>
-
-        <!-- ── Breadcrumb slot ────────────────────────────────────── -->
-        <template #header>
-            <span class="cv-header-breadcrumb-current">
-                {{ t('Dashboard', 'لوحة المؤشرات') }}
-            </span>
-        </template>
-
+    
         <!-- ════════════════════════════════════════════════════════
              PAGE HERO
         ════════════════════════════════════════════════════════ -->
@@ -532,7 +526,7 @@ const generatedAt = computed(() => {
             </div>
 
         </div><!-- /dash-body -->
-    </AuthenticatedLayout>
+    
 </template>
 
 <style scoped>

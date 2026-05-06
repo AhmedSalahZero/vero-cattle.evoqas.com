@@ -18,6 +18,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const props = defineProps({
     lots:     { type: Array,  default: () => [] },
     farms:    { type: Array,  default: () => [] },
@@ -149,7 +151,7 @@ function statusLabel(status) {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+    
         <div :dir="isRtl ? 'rtl' : 'ltr'" class="lots-root">
 
             <!-- ═══ HERO HEADER ══════════════════════════════════════ -->
@@ -457,7 +459,7 @@ function statusLabel(status) {
             </Teleport>
 
         </div>
-    </AuthenticatedLayout>
+   
 </template>
 
 <style scoped>

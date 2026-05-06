@@ -25,6 +25,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 // ── Props ─────────────────────────────────────────────────────────
 const props = defineProps({
     records:  Object,
@@ -225,7 +227,7 @@ function farmName(farmId) {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+    
 
         <!-- ═══════════════════════════════════════════════════════════
              PAGE HERO
@@ -639,7 +641,7 @@ function farmName(farmId) {
             </div>
         </Transition>
 
-    </AuthenticatedLayout>
+    
 </template>
 
 <style scoped>

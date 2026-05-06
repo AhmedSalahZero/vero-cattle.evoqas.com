@@ -1,10 +1,6 @@
 <template>
-    <AuthenticatedLayout>
-        <template #header>
-            <span class="cv-header-breadcrumb-current">
-                {{ lang === 'ar' ? 'الميزانية التقديرية' : 'Budget' }}
-            </span>
-        </template>
+    
+      
 
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
@@ -575,7 +571,7 @@
 
             </div><!-- /cv-page -->
         </div>
-    </AuthenticatedLayout>
+    
 </template>
 
 <script setup>
@@ -593,6 +589,8 @@ import { usePage, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
+
+defineOptions({ layout: AuthenticatedLayout })
 
 // ── Props ─────────────────────────────────────────────────────────
 const props = defineProps({

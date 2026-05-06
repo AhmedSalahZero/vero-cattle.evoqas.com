@@ -183,14 +183,22 @@
               <label class="cv-label">{{ isRtl ? 'قيمة الخردة (ج.م)' : 'Salvage Value (EGP)' }}</label>
               <div class="cv-input-group">
                 <span class="cv-input-prefix">{{ isRtl ? 'ج.م' : 'EGP' }}</span>
-                <input v-model="form.salvage_value" type="number" step="0.01" min="0" class="cv-input" :disabled="hasPostedLines" />
+                <input v-model="form.salvage_value" type="number" step="0.01" min="0" class="cv-input" :disabled="hasPostedLines || isLand" />
               </div>
-              <div style="font-size:0.7rem; color: var(--cv-text-muted); margin-top:3px">{{ isRtl ? 'القيمة المتبقية بعد انتهاء العمر الإنتاجي' : 'Residual value at end of useful life' }}</div>
+              <div style="font-size:0.7rem; color: var(--cv-text-muted); margin-top:3px">
+                <span v-if="isLand" style="color: var(--cv-warning-text)">{{ isRtl ? 'الأراضي لا تُهلك — القيمة المتبقية دائماً صفر' : 'Land is not depreciated — salvage value is always 0' }}</span>
+                <span v-else>{{ isRtl ? 'القيمة المتبقية بعد انتهاء العمر الإنتاجي' : 'Residual value at end of useful life' }}</span>
+              </div>
             </div>
 
             <!-- Depreciation Method — full width -->
             <div class="cv-field" style="grid-column: 1 / -1">
               <label class="cv-label">{{ isRtl ? 'طريقة الإهلاك' : 'Depreciation Method' }} <span style="color:var(--cv-danger-text)">*</span></label>
+              <!-- Land info banner -->
+              <div v-if="isLand" style="display:flex; align-items:center; gap:0.5rem; background: var(--cv-green-dim); border: 1px solid var(--cv-green-border); border-radius: var(--cv-radius); padding: 0.6rem 0.875rem; font-size:0.8rem; color: var(--cv-success-text); margin-bottom: 0.5rem">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                {{ isRtl ? 'الأراضي أصول غير قابلة للإهلاك — طريقة الإهلاك مقفلة على "بدون إهلاك"' : 'Land is a non-depreciable asset — depreciation method is locked to No Depreciation' }}
+              </div>
               <div class="method-toggle">
                 <button
                   v-for="m in depMethods"
@@ -198,7 +206,7 @@
                   type="button"
                   class="method-btn"
                   :class="{ active: form.depreciation_method === m.value }"
-                  :disabled="hasPostedLines"
+                  :disabled="hasPostedLines || isLand"
                   @click="form.depreciation_method = m.value"
                 >
                   <span v-html="m.icon" style="display:flex;align-items:center;justify-content:center;width:16px;height:16px"></span>
@@ -272,8 +280,8 @@
               <div v-if="form.errors?.asset_account_id" class="cv-field-error">{{ form.errors.asset_account_id }}</div>
             </div>
 
-            <!-- Accum Dep Account -->
-            <div class="cv-field">
+            <!-- Accum Dep Account — hidden for land, auto-filled by watch -->
+            <div v-show="!isLand" class="cv-field">
               <label class="cv-label">{{ isRtl ? 'حساب الإهلاك المتراكم' : 'Accum. Dep. Account' }} <span style="color:var(--cv-danger-text)">*</span></label>
               <select v-model="form.acc_dep_account_id" class="cv-select" :class="{ 'cv-input-error': form.errors?.acc_dep_account_id }" :disabled="hasPostedLines">
                 <option value="">{{ isRtl ? 'اختر الحساب' : 'Select account' }}</option>
@@ -282,14 +290,56 @@
               <div v-if="form.errors?.acc_dep_account_id" class="cv-field-error">{{ form.errors.acc_dep_account_id }}</div>
             </div>
 
-            <!-- Dep Expense Account -->
-            <div class="cv-field">
+            <!-- Dep Expense Account — hidden for land, auto-filled by watch -->
+            <div v-show="!isLand" class="cv-field">
               <label class="cv-label">{{ isRtl ? 'حساب مصروف الإهلاك' : 'Dep. Expense Account' }} <span style="color:var(--cv-danger-text)">*</span></label>
               <select v-model="form.dep_expense_account_id" class="cv-select" :class="{ 'cv-input-error': form.errors?.dep_expense_account_id }" :disabled="hasPostedLines">
                 <option value="">{{ isRtl ? 'اختر الحساب' : 'Select account' }}</option>
                 <option v-for="a in expenseAccounts" :key="a.id" :value="a.id">{{ a.code }} — {{ n(a) }}</option>
               </select>
               <div v-if="form.errors?.dep_expense_account_id" class="cv-field-error">{{ form.errors.dep_expense_account_id }}</div>
+            </div>
+
+            <!-- Payment Account — always visible, locked after first JE posted -->
+            <div class="cv-field" style="grid-column: 1 / -1">
+              <label class="cv-label">
+                {{ isRtl ? 'حساب الدفع (المقابل في قيد الشراء)' : 'Payment Account (credit side of purchase entry)' }}
+                <span style="color:var(--cv-danger-text)">*</span>
+              </label>
+              <select
+                v-model="form.payment_account_id"
+                class="cv-select"
+                :class="{ 'cv-input-error': form.errors?.payment_account_id }"
+              >
+                <option value="">{{ isRtl ? 'اختر طريقة الدفع' : 'Select payment method' }}</option>
+                <optgroup :label="isRtl ? 'نقد' : 'Cash'">
+                  <option v-for="a in paymentAccounts.filter(a => a.code?.toString().startsWith('14'))" :key="a.id" :value="a.id">
+                    {{ a.code }} — {{ n(a) }}
+                  </option>
+                </optgroup>
+                <optgroup :label="isRtl ? 'بنك' : 'Bank'">
+                  <option v-for="a in paymentAccounts.filter(a => a.code?.toString().startsWith('15'))" :key="a.id" :value="a.id">
+                    {{ a.code }} — {{ n(a) }}
+                  </option>
+                </optgroup>
+                <optgroup :label="isRtl ? 'ذمم دائنة / مورد' : 'Payables / Supplier'">
+                  <option v-for="a in paymentAccounts.filter(a => !a.code?.toString().startsWith('14') && !a.code?.toString().startsWith('15'))" :key="a.id" :value="a.id">
+                    {{ a.code }} — {{ n(a) }}
+                  </option>
+                </optgroup>
+              </select>
+              <div v-if="form.errors?.payment_account_id" class="cv-field-error">{{ form.errors.payment_account_id }}</div>
+              <div style="font-size:0.7rem; color: var(--cv-text-muted); margin-top:3px">
+                <span v-if="mode === 'edit' && asset?.journal_entry_id" style="color: var(--cv-amber-text)">
+                  {{ isRtl
+                    ? 'تغيير الحساب سيعكس القيد القديم تلقائياً ويرحّل قيداً جديداً بالحساب المختار'
+                    : 'Changing the account will automatically reverse the old entry and post a new one'
+                  }}
+                </span>
+                <span v-else>
+                  {{ isRtl ? 'نقد = دُفع فوراً · بنك = حوالة بنكية · ذمم دائنة = شُراء بالأجل' : 'Cash = paid immediately · Bank = wire transfer · Payables = purchased on credit' }}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -321,7 +371,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { Link, useForm } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
@@ -329,10 +379,11 @@ import { useLocale } from '@/Composables/useLocale'
 const { locale, isRtl, n } = useLocale()
 
 const props = defineProps({
-  asset:    { type: Object, default: null },
-  farms:    { type: Array,  default: () => [] },
-  accounts: { type: Array,  default: () => [] },
-  mode:     { type: String, default: 'create' },
+  asset:            { type: Object, default: null },
+  farms:            { type: Array,  default: () => [] },
+  accounts:         { type: Array,  default: () => [] },
+  payment_accounts: { type: Array,  default: () => [] },
+  mode:             { type: String, default: 'create' },
 })
 
 // ── Detect locked financials ──────────────────────────────────────
@@ -357,10 +408,40 @@ const form = useForm({
   depreciation_method:   props.asset?.depreciation_method   ?? 'straight_line',
   useful_life_months:    props.asset?.useful_life_months    ?? '',
   db_rate:               props.asset?.db_rate               ?? '',
-  asset_account_id:      props.asset?.asset_account_id      ?? '',
-  acc_dep_account_id:    props.asset?.acc_dep_account_id    ?? '',
+  asset_account_id:       props.asset?.asset_account_id       ?? '',
+  acc_dep_account_id:     props.asset?.acc_dep_account_id     ?? '',
   dep_expense_account_id: props.asset?.dep_expense_account_id ?? '',
-  notes:                 props.asset?.notes                 ?? '',
+  payment_account_id:     props.asset?.payment_account_id     ?? '',
+  notes:                  props.asset?.notes                  ?? '',
+})
+
+// ── Land category guard ───────────────────────────────────────────
+const isLand = computed(() => form.category === 'land')
+
+// When category switches to land: lock dep method, zero salvage,
+// and mirror the asset account into both dep account fields so the
+// NOT NULL DB constraint is satisfied (land never posts depreciation).
+watch(() => form.category, (cat) => {
+  if (cat === 'land') {
+    form.depreciation_method  = 'none'
+    form.salvage_value        = 0
+    form.useful_life_months   = ''
+    form.db_rate              = ''
+    // Mirror asset account as placeholder for dep accounts
+    if (form.asset_account_id) {
+      form.acc_dep_account_id     = form.asset_account_id
+      form.dep_expense_account_id = form.asset_account_id
+    }
+  }
+})
+
+// If user picks the asset account AFTER already selecting land,
+// keep dep account fields in sync automatically.
+watch(() => form.asset_account_id, (val) => {
+  if (isLand.value && val) {
+    form.acc_dep_account_id     = val
+    form.dep_expense_account_id = val
+  }
 })
 
 // ── Submit ────────────────────────────────────────────────────────
@@ -376,6 +457,10 @@ function submit() {
 const assetAccounts   = computed(() => props.accounts.filter(a => a.type === 'asset'))
 const contraAccounts  = computed(() => props.accounts.filter(a => a.type === 'asset'))   // Accum Dep is contra-asset
 const expenseAccounts = computed(() => props.accounts.filter(a => a.type === 'expense'))
+// Payment accounts come from a dedicated prop (payment_accounts) that bypasses
+// the allow_direct_posting filter — cash/bank accounts (14xx, 15xx) are valid
+// credit accounts for a purchase JE even when allow_direct_posting = false.
+const paymentAccounts = computed(() => props.payment_accounts)
 
 // ── Preview ───────────────────────────────────────────────────────
 const previewName = computed(() => {

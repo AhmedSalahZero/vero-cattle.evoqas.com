@@ -10,6 +10,7 @@ use App\Models\InventoryTransaction;
 use App\Models\JournalEntry;
 use App\Models\JournalLine;
 use App\Models\ProcurementRecord;
+use App\Models\WeightRecord;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -145,7 +146,7 @@ class LivestockReceiptService
             $now = Carbon::now();
 
             foreach ($animalsData as $animalData) {
-                Animal::create([
+                $animal = Animal::create([
                     'company_id'          => $po->company_id,
                     'farm_id'             => $po->farm_id,
                     'lot_id'              => $po->lot_id,
@@ -174,6 +175,34 @@ class LivestockReceiptService
                     'created_at'          => $now,
                     'updated_at'          => $now,
                 ]);
+
+                // ── STEP 4b: Write arrival weight to weight_records ───
+                // The receiving user weighs each animal on arrival.
+                // This weight is w_initial — the ADG baseline.
+                // Without this row, adgFcrForAnimal() has no starting
+                // point and returns null for every purchased animal.
+                //
+                // 📌 METHODOLOGY REFERENCE: ADG_FCR (#9)
+                //
+                // session_ref = 'PO-ARRIVAL/{po_reference}' so the
+                // weight history is auditable and clearly identifiable
+                // as an arrival weigh-in, not a routine mid-period check.
+                if (!empty($animalData['weight_kg'])) {
+                    WeightRecord::create([
+                        'company_id'      => $po->company_id,
+                        'farm_id'         => $po->farm_id,
+                        'lot_id'          => $po->lot_id,
+                        'animal_id'       => $animal->id,
+                        'date'            => $receiptDate,
+                        'weight_kg'       => (float) $animalData['weight_kg'],
+                        'session_ref'     => 'PO-ARRIVAL/' . ($po->po_reference ?? $po->id),
+                        'scale_reference' => null,
+                        'recorded_by'     => Auth::id(),
+                        'notes'           => 'Arrival weight — PO receipt batch #' . $batch->id,
+                        'created_at'      => $now,
+                        'updated_at'      => $now,
+                    ]);
+                }
             }
 
             // ── STEP 5: Create inventory transaction ──────────────

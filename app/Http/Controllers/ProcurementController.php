@@ -74,7 +74,11 @@ class ProcurementController extends Controller
             'supplier:id,name_en,name_ar',
             'farm:id,name_en,name_ar',
             'lot:id,name',
-        ])->withCount(['lines', 'receiptBatches']);
+        ])->withCount(['lines', 'receiptBatches'])
+          // Inventory PO receipt progress — aggregate item line qty totals
+          // Used by the index receipt progress bar for po_type='inventory'
+          ->withSum('itemLines as ordered_qty_sum', 'qty_ordered')
+          ->withSum('itemLines as received_qty_sum', 'qty_received');
 
         if (!$authUser->is_super_admin) {
             $query->where('company_id', $authUser->company_id);
@@ -1104,6 +1108,10 @@ class ProcurementController extends Controller
             'max_head'                => $record->max_head,
             'received_head'           => $record->received_head,
             'remaining_head'          => max(0, $record->max_head - $record->received_head),
+            // Inventory PO receipt progress — summed from item lines via withSum() in index()
+            // Falls back to 0 on show/edit pages where withSum is not applied
+            'ordered_qty'             => (float) ($record->ordered_qty_sum ?? 0),
+            'received_qty'            => (float) ($record->received_qty_sum ?? 0),
             'estimated_price_per_kg'  => $record->estimated_price_per_kg,
             'estimated_avg_weight_kg' => $record->estimated_avg_weight_kg,
             'subtotal'                => $record->subtotal,

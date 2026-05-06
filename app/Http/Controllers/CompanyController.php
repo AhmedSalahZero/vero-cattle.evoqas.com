@@ -150,10 +150,11 @@ class CompanyController extends Controller
     {
         abort_unless($request->user()->is_super_admin, 403);
 
-        // Prevent deletion if company has farms or users
-        if ($company->farms()->exists() || $company->users()->exists()) {
+        // Prevent deletion if company still has users assigned
+        // (farms and all other data cascade-delete automatically)
+        if ($company->users()->exists()) {
             return back()->withErrors([
-                'company' => __('messages.company_has_records'),
+                'company' => __('messages.company_has_users'),
             ]);
         }
 
@@ -161,7 +162,11 @@ class CompanyController extends Controller
             Storage::disk('public')->delete($company->logo);
         }
 
-        $company->delete();
+        // forceDelete() permanently removes the row from the DB,
+        // which triggers the ON DELETE CASCADE on all child tables.
+        // Using soft delete ($company->delete()) would only set deleted_at
+        // and the cascade would never fire.
+        $company->forceDelete();
 
         return redirect()->route('companies.index')
             ->with('success', __('messages.company_deleted'));

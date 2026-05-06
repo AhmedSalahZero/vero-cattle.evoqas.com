@@ -5,6 +5,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const props = defineProps({
     records:   { type: Object, required: true },
     farms:     { type: Array,  default: () => [] },
@@ -103,6 +105,11 @@ function poStatusLabel(status) {
 
 // ── Receipt progress bar ──────────────────────────────────────────
 function receiptProgress(rec) {
+    if (rec.po_type === 'inventory') {
+        const max = Number(rec.ordered_qty) || 1
+        const received = Number(rec.received_qty) || 0
+        return Math.min(100, Math.round((received / max) * 100))
+    }
     const max = Number(rec.max_head) || 1
     const received = Number(rec.received_head) || 0
     return Math.min(100, Math.round((received / max) * 100))
@@ -136,7 +143,7 @@ const stats = computed(() => {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+   
 
         <!-- ══ PAGE HERO ══════════════════════════════════════════ -->
         <div class="cv-page-hero" :dir="isRtl ? 'rtl' : 'ltr'">
@@ -268,7 +275,7 @@ const stats = computed(() => {
                                     {{ lang === 'ar' ? 'التقدم' : 'Progress' }}
                                 </th>
                                 <th style="padding:.75rem 1rem;text-align:end;font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--cv-blue-text);white-space:nowrap">
-                                    {{ lang === 'ar' ? 'السعر/كجم' : 'Price/kg' }}
+                                    {{ lang === 'ar' ? 'إجمالي الأمر' : 'PO Total' }}
                                 </th>
                                 <th style="padding:.75rem 1rem;text-align:start;font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--cv-text-muted);white-space:nowrap">
                                     {{ lang === 'ar' ? 'الاستحقاق' : 'Due' }}
@@ -339,8 +346,10 @@ const stats = computed(() => {
                                                 <span style="color:var(--cv-text-muted)"> / {{ rec.min_head }}–{{ rec.max_head }} {{ lang === 'ar' ? 'رأس' : 'head' }}</span>
                                             </template>
                                             <template v-else>
-                                                <span style="color:var(--cv-blue-text);font-weight:700">{{ rec.received_qty ?? 0 }}</span>
-                                                <span style="color:var(--cv-text-muted)"> / {{ rec.ordered_qty ?? 0 }} {{ lang === 'ar' ? 'وحدة' : 'units' }}</span>
+                                                <span :style="rec.received_qty > rec.ordered_qty ? 'color:var(--cv-danger-text);font-weight:700' : 'color:var(--cv-blue-text);font-weight:700'">
+                                                    {{ fmt(rec.received_qty ?? 0) }}
+                                                </span>
+                                                <span style="color:var(--cv-text-muted)"> / {{ fmt(rec.ordered_qty ?? 0) }}</span>
                                             </template>
                                         </div>
                                     </div>
@@ -351,13 +360,13 @@ const stats = computed(() => {
                                     </div>
                                 </td>
 
-                                <!-- Estimated price per kg -->
+                                <!-- PO Total Value -->
                                 <td style="padding:.75rem 1rem;text-align:end;white-space:nowrap">
                                     <span style="font-weight:600;color:var(--cv-blue-text)">
-                                        {{ rec.estimated_price_per_kg ? fmt(rec.estimated_price_per_kg) : '—' }}
+                                        {{ rec.total_amount ? fmt(rec.total_amount) : '—' }}
                                     </span>
                                     <span style="font-size:.65rem;color:var(--cv-text-muted);margin-inline-start:2px">
-                                        {{ rec.estimated_price_per_kg ? (rec.currency ?? 'EGP') : '' }}
+                                        {{ rec.total_amount ? (rec.currency ?? 'EGP') : '' }}
                                     </span>
                                 </td>
 
@@ -563,5 +572,5 @@ const stats = computed(() => {
             </div>
         </Teleport>
 
-    </AuthenticatedLayout>
+    
 </template>

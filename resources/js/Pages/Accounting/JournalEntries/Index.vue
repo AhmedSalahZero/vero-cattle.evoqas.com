@@ -23,6 +23,8 @@ import { Link, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const { locale: lang, isRtl, n } = useLocale()
 
 // ── Bilingual UI strings ──────────────────────────────────────────
@@ -251,10 +253,8 @@ const goToPage = (url) => { if (url) router.get(url, {}, { preserveScroll: true 
 </script>
 
 <template>
-    <AuthenticatedLayout>
-        <template #header>
-            <span class="cv-header-breadcrumb-current">{{ t('title') }}</span>
-        </template>
+    
+        
 
         <!-- ── Hero ──────────────────────────────────────────────── -->
         <div class="cv-page-hero" :dir="isRtl ? 'rtl' : 'ltr'">
@@ -620,5 +620,5 @@ const goToPage = (url) => { if (url) router.get(url, {}, { preserveScroll: true 
             </div>
         </Teleport>
 
-    </AuthenticatedLayout>
+   
 </template>

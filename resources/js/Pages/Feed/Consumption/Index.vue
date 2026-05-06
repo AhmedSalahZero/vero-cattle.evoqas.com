@@ -25,6 +25,7 @@ import { ref, computed, watch } from 'vue'
 import { useForm, router, Link, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
+defineOptions({ layout: AuthenticatedLayout })
 
 const { locale: lang, isRtl, n } = useLocale()
 
@@ -185,6 +186,7 @@ const batchTotalCost = computed(() =>
 const editForm = useForm({
     farm_id: '', lot_id: '', inventory_item_id: '', location_id: '',
     date: '', qty_kg: '', unit_cost: '', total_cost: '', notes: '',
+    animal_ids: [],   // ← ADD THIS
 })
 
 // ── Edit panel ────────────────────────────────────────────────────
@@ -202,6 +204,8 @@ function openEdit(rec) {
     editForm.unit_cost         = rec.unit_cost
     editForm.total_cost        = rec.total_cost
     editForm.notes             = rec.notes ?? ''
+    editForm.animal_ids        = rec.animal_ids ?? []   // ← ADD THIS LINE
+    loadLotAnimals(rec.lot_id)                          // ← ADD THIS LINE
     editForm.clearErrors()
     editPanelOpen.value = true
 }
@@ -290,7 +294,7 @@ const t = computed(() => lang.value === 'ar' ? {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+   
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
             <!-- Hero -->
@@ -528,35 +532,34 @@ const t = computed(() => lang.value === 'ar' ? {
                                         <div v-else-if="lotAnimals.length === 0" style="font-size:.78rem;color:var(--cv-danger-text);padding:.4rem 0">
                                             {{ lang==='ar' ? 'لا توجد حيوانات نشطة في هذه المجموعة' : 'No active animals in this lot' }}
                                         </div>
-                                      <!-- Animal picker — multi-select dropdown -->
+                                        <!-- Animal picker — chip grid -->
                                         <div v-else>
-                                            <div style="display:flex;gap:.5rem;margin-bottom:.4rem;align-items:center">
-                                                <button type="button" @click="selectAllAnimals" class="cv-btn cv-btn-ghost" style="font-size:.72rem;padding:.2rem .6rem">
+                                            <div style="display:flex;gap:.5rem;margin-bottom:.6rem;align-items:center">
+                                                <button type="button" @click="selectAllAnimals" class="cv-btn cv-btn-ghost" style="font-size:.72rem;padding:.2rem .65rem">
                                                     {{ lang==='ar' ? 'تحديد الكل' : 'Select All' }}
                                                 </button>
-                                                <button type="button" @click="clearAllAnimals" class="cv-btn cv-btn-ghost" style="font-size:.72rem;padding:.2rem .6rem">
+                                                <button type="button" @click="clearAllAnimals" class="cv-btn cv-btn-ghost" style="font-size:.72rem;padding:.2rem .65rem">
                                                     {{ lang==='ar' ? 'إلغاء الكل' : 'Clear All' }}
                                                 </button>
-                                                <span style="font-size:.72rem;color:var(--cv-text-muted)">
-                                                    {{ lang==='ar' ? '(اضغط Ctrl للتحديد المتعدد)' : '(Hold Ctrl to select multiple)' }}
-                                                </span>
                                             </div>
-                                            <select
-                                                multiple
-                                                class="cv-input"
-                                                style="height:160px;padding:.25rem;option-padding:.4rem"
-                                                @change="onMultiSelectChange"
-                                            >
-                                                <option
+                                            <div class="animal-chip-grid">
+                                                <div
                                                     v-for="animal in lotAnimals"
                                                     :key="animal.id"
-                                                    :value="animal.id"
-                                                    :selected="batchForm.animal_ids.includes(animal.id)"
-                                                    style="padding:.35rem .5rem"
+                                                    class="animal-chip"
+                                                    :class="{ 'animal-chip-selected': batchForm.animal_ids.includes(animal.id) }"
+                                                    @click="toggleAnimal(animal.id)"
                                                 >
-                                                    {{ animal.tag }} — {{ animal.breed }}
-                                                </option>
-                                            </select>
+                                                    <div class="animal-chip-check">
+                                                        <svg v-if="batchForm.animal_ids.includes(animal.id)" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" width="8" height="8"><polyline points="20 6 9 17 4 12"/></svg>
+                                                    </div>
+                                                    <div class="animal-chip-info">
+                                                        <span class="animal-chip-tag">{{ animal.tag }}</span>
+                                                        <span class="animal-chip-breed">{{ animal.breed }}</span>
+                                                        <span v-if="animal.weight" class="animal-chip-weight">{{ animal.weight }} kg</span>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
                                         <p v-if="batchForm.errors.animal_ids" class="cv-field-error mt-1">{{ batchForm.errors.animal_ids }}</p>
                                     </div>
@@ -788,7 +791,7 @@ const t = computed(() => lang.value === 'ar' ? {
             </Transition>
 
         </div>
-    </AuthenticatedLayout>
+   
 </template>
 
 <style scoped>
@@ -806,7 +809,7 @@ const t = computed(() => lang.value === 'ar' ? {
 .mt-4{margin-top:1rem}.mt-6{margin-top:1.5rem}
 .panel-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(3px);z-index:50}
 .slide-panel{position:fixed;inset-block:0;inset-inline-end:0;width:100%;max-width:520px;background:var(--cv-bg-card);border-inline-start:1px solid var(--cv-border);z-index:51;display:flex;flex-direction:column;box-shadow:-8px 0 40px rgba(0,0,0,.4)}
-.panel-wide{max-width:680px}
+.panel-wide{max-width:860px}
 .panel-header{display:flex;align-items:center;justify-content:space-between;padding:1.25rem 1.5rem;border-bottom:1px solid var(--cv-border);flex-shrink:0}
 .panel-icon{width:2.25rem;height:2.25rem;border-radius:.5rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .panel-title{font-size:1rem;font-weight:600;color:var(--cv-text-primary)}
@@ -832,7 +835,17 @@ const t = computed(() => lang.value === 'ar' ? {
 .add-row-btn:hover{background:color-mix(in srgb,var(--cv-amber) 15%,transparent);border-color:var(--cv-amber)}
 .batch-total{display:flex;align-items:center;justify-content:space-between;padding:.6rem .75rem;background:color-mix(in srgb,var(--cv-blue-text) 8%,transparent);border:1px solid color-mix(in srgb,var(--cv-blue-text) 20%,transparent);border-radius:.45rem;font-size:.8rem;color:var(--cv-text-muted)}
 .batch-total-val{font-size:1rem;font-weight:700;color:var(--cv-blue-text)}
-.backdrop-fade-enter-active,.backdrop-fade-leave-active{transition:opacity .2s ease}
+.animal-chip-grid{display:flex;flex-wrap:wrap;gap:7px;max-height:280px;overflow-y:auto;padding:.25rem .1rem}
+.animal-chip{display:flex;align-items:center;gap:7px;padding:6px 12px 6px 8px;border-radius:999px;border:1px solid var(--cv-border);background:var(--cv-bg-card);cursor:pointer;transition:opacity .15s,border-color .15s,background .15s;opacity:.38;user-select:none}
+.animal-chip:hover{opacity:.65}
+.animal-chip-selected{opacity:1;border-color:var(--cv-green-bright);background:color-mix(in srgb,var(--cv-green-bright) 10%,transparent)}
+.animal-chip-check{width:15px;height:15px;border-radius:50%;border:1.5px solid var(--cv-border);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .15s,border-color .15s}
+.animal-chip-selected .animal-chip-check{background:var(--cv-green-bright);border-color:var(--cv-green-bright)}
+.animal-chip-info{display:flex;flex-direction:column;gap:1px}
+.animal-chip-tag{font-size:.75rem;font-weight:600;color:var(--cv-text-primary);line-height:1.3}
+.animal-chip-breed{font-size:.68rem;color:var(--cv-text-muted);line-height:1.3}
+.animal-chip-weight{font-size:.68rem;font-weight:600;color:var(--cv-blue-text);line-height:1.3}
+
 .backdrop-fade-enter-from,.backdrop-fade-leave-to{opacity:0}
 .panel-slide-enter-active,.panel-slide-leave-active{transition:transform .25s ease}
 .panel-slide-enter-from,.panel-slide-leave-to{transform:translateX(100%)}

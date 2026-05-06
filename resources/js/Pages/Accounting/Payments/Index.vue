@@ -22,6 +22,8 @@ import { useForm, usePage, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const props = defineProps({
     collections:     Object,
     payments:        Object,
@@ -639,7 +641,7 @@ watch(() => form.currency, (val) => {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+    
 
         <!-- ── Hero ─────────────────────────────────────────────── -->
         <div class="cv-page-hero">
@@ -1380,7 +1382,7 @@ watch(() => form.currency, (val) => {
         </div>
         </Transition>
 
-    </AuthenticatedLayout>
+    
 </template>
 
 <style scoped>

@@ -15,6 +15,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const props = defineProps({
     customers:  { type: Array,  default: () => [] },
     companies:  { type: Array,  default: () => [] },
@@ -133,7 +135,7 @@ const ui = computed(() => lang.value === 'ar' ? {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+   
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
             <!-- ── PAGE HERO ─────────────────────────────────────── -->
@@ -451,5 +453,5 @@ const ui = computed(() => lang.value === 'ar' ? {
             </div>
         </Transition>
 
-    </AuthenticatedLayout>
+    
 </template>

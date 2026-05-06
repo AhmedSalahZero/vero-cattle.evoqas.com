@@ -19,6 +19,8 @@ import { router, Link, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const props = defineProps({
     farms:       { type: Array,  default: () => [] },
     companies:   { type: Array,  default: () => [] },
@@ -135,7 +137,7 @@ const doDelete = () => {
 
 <template>
     <!-- FIX B: No :title prop — AuthenticatedLayout has a multi-root template -->
-    <AuthenticatedLayout>
+    
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
             <!-- PAGE HERO -->
@@ -314,7 +316,7 @@ const doDelete = () => {
             </Teleport>
 
         </div>
-    </AuthenticatedLayout>
+  
 </template>
 
 <style scoped>

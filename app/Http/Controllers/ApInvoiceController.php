@@ -81,7 +81,15 @@ class ApInvoiceController extends Controller
             403
         );
 
-        $query = ApInvoice::with('supplier:id,name_en,name_ar');
+        // 📌 matched_accruals_count: correlated subquery — no Eloquent relationship exists
+        // on ApInvoice for InventoryTransaction, so withCount() cannot be used.
+        // selectSub inlines the COUNT per row efficiently in one query.
+        $matchedSub = InventoryTransaction::selectRaw('COUNT(*)')
+            ->whereColumn('ap_invoice_id', 'ap_invoices.id');
+
+        $query = ApInvoice::with('supplier:id,name_en,name_ar')
+            ->selectRaw('ap_invoices.*, (?) as matched_accruals_count', [$matchedSub->toSql()])
+            ->mergeBindings($matchedSub->getQuery());
 
         if ($authUser->is_super_admin) {
             // SA can filter by company
@@ -579,8 +587,11 @@ class ApInvoiceController extends Controller
             'balance_egp'        => round($i->balance * $i->exchange_rate, 2),
             'status'             => $i->status,
             'notes'              => $i->notes,
-            'invoice_type'       => $i->invoice_type ?? 'cattle',
-            'expense_account_id' => $i->expense_account_id,
+            'invoice_type'          => $i->invoice_type ?? 'cattle',
+            'expense_account_id'    => $i->expense_account_id,
+            // Populated via withCount() on the index query; falls back to 0 for Show/Edit
+            // which uses formatInvoiceFull() with its own explicit count.
+            'matched_accruals_count'=> $i->matched_accruals_count ?? 0,
         ];
     }
 

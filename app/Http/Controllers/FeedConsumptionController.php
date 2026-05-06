@@ -551,6 +551,10 @@ class FeedConsumptionController extends Controller
             'journal_entry_id'   => $record->journal_entry_id,
             'notes'              => $record->notes,
             'created_at'         => $record->created_at?->format('d M Y'),
+            'animal_ids'         => DB::table('feed_consumption_animals')
+                                       ->where('feed_consumption_id', $record->id)
+                                       ->pluck('animal_id')
+                                       ->toArray(),
         ];
     }
 

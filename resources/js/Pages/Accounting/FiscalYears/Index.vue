@@ -16,6 +16,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 // ── Props ─────────────────────────────────────────────────────────
 const props = defineProps({
     years:     { type: Array,  default: () => [] },
@@ -163,7 +165,7 @@ const confirmBody = computed(() => {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+    
         <div :dir="isRtl ? 'rtl' : 'ltr'">
 
             <!-- ══ HERO ══════════════════════════════════════════════ -->
@@ -463,7 +465,7 @@ const confirmBody = computed(() => {
             </Transition>
 
         </div>
-    </AuthenticatedLayout>
+    
 </template>
 
 <style scoped>

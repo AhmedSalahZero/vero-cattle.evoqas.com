@@ -24,6 +24,8 @@ import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 import axios from 'axios'
 
+defineOptions({ layout: AuthenticatedLayout })
+
 const { locale: lang, isRtl, n } = useLocale()
 const page = usePage()
 
@@ -278,7 +280,7 @@ function fmt(val, decimals = 2) {
 </script>
 
 <template>
-    <AuthenticatedLayout>
+    
         <div :dir="isRtl ? 'rtl' : 'ltr'">
     <!-- ══════════════════════════════════════════════════════════
          PAGE HERO
@@ -1040,7 +1042,7 @@ function fmt(val, decimals = 2) {
         </div>
          </Transition>
 
-    </AuthenticatedLayout>
+   
 </template>
 
 <style scoped>
