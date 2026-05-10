@@ -735,12 +735,17 @@ function printPage() { window.print() }
                             <table class="report-table bs-table">
                                 <tbody>
                                     <tr v-for="row in report.assets" :key="'a-' + row.account_id"
-                                        class="report-row">
+                                        class="report-row"
+                                        :class="{ 'bs-group-row': !row.allow_direct_posting }">
                                         <td class="col-code code-cell">{{ row.code }}</td>
-                                        <td class="col-name">
+                                        <td class="col-name"
+                                            :style="{ paddingInlineStart: (1 + (row.depth || 0) * 1.25) + 'rem' }">
                                             {{ lang === 'ar' ? (row.name_ar || row.name_en) : (row.name_en || row.name_ar) }}
                                         </td>
-                                        <td class="col-num blue-num">{{ fmtAmt(row.balance) }}</td>
+                                        <td class="col-num blue-num"
+                                            :class="{ 'bs-group-num': !row.allow_direct_posting }">
+                                            {{ fmtAmt(row.balance) }}
+                                        </td>
                                     </tr>
                                 </tbody>
                                 <tfoot>
@@ -758,12 +763,17 @@ function printPage() { window.print() }
                             <table class="report-table bs-table">
                                 <tbody>
                                     <tr v-for="row in report.liabilities" :key="'l-' + row.account_id"
-                                        class="report-row">
+                                        class="report-row"
+                                        :class="{ 'bs-group-row': !row.allow_direct_posting }">
                                         <td class="col-code code-cell">{{ row.code }}</td>
-                                        <td class="col-name">
+                                        <td class="col-name"
+                                            :style="{ paddingInlineStart: (1 + (row.depth || 0) * 1.25) + 'rem' }">
                                             {{ lang === 'ar' ? (row.name_ar || row.name_en) : (row.name_en || row.name_ar) }}
                                         </td>
-                                        <td class="col-num" :class="amtClass(-row.balance)">{{ fmtAmt(row.balance) }}</td>
+                                        <td class="col-num"
+                                            :class="[amtClass(-row.balance), { 'bs-group-num': !row.allow_direct_posting }]">
+                                            {{ fmtAmt(row.balance) }}
+                                        </td>
                                     </tr>
                                 </tbody>
                                 <tfoot>
@@ -779,12 +789,16 @@ function printPage() { window.print() }
                                 <tbody>
                                     <tr v-for="row in report.equity" :key="'e-' + (row.account_id || row.code)"
                                         class="report-row"
-                                        :class="{ 'ytd-row': row.code === 'RE_YTD' }">
+                                        :class="{ 'ytd-row': row.code === 'RE_YTD', 'bs-group-row': !row.allow_direct_posting && row.code !== 'RE_YTD' }">
                                         <td class="col-code code-cell">{{ row.code }}</td>
-                                        <td class="col-name">
+                                        <td class="col-name"
+                                            :style="{ paddingInlineStart: (1 + (row.depth || 0) * 1.25) + 'rem' }">
                                             {{ lang === 'ar' ? (row.name_ar || row.name_en) : (row.name_en || row.name_ar) }}
                                         </td>
-                                        <td class="col-num" :class="amtClass(-row.balance)">{{ fmtAmt(row.balance) }}</td>
+                                        <td class="col-num"
+                                            :class="[amtClass(-row.balance), { 'bs-group-num': !row.allow_direct_posting && row.code !== 'RE_YTD' }]">
+                                            {{ fmtAmt(row.balance) }}
+                                        </td>
                                     </tr>
                                 </tbody>
                                 <tfoot>
@@ -1253,6 +1267,21 @@ function printPage() { window.print() }
 .liab-header   { color: var(--cv-danger-text);       border-color: var(--cv-danger);      }
 .equity-header { color: var(--cv-amber-text);        border-color: var(--cv-amber);       }
 .bs-table      { width: 100%; }
+
+/* Group header rows in the Balance Sheet tree */
+.bs-group-row td {
+    background: var(--cv-bg-card-alt);
+    font-weight: 600;
+    font-size: 0.8125rem;
+    color: var(--cv-text-secondary);
+    border-top: 1px solid var(--cv-border-md);
+    padding-top: 0.4375rem;
+    padding-bottom: 0.4375rem;
+}
+.bs-group-num {
+    color: var(--cv-text-secondary) !important;
+    font-weight: 700 !important;
+}
 
 /* ── Cash Flow layout ──────────────────────────────────────────── */
 .cf-layout { padding: 1.25rem; display: flex; flex-direction: column; gap: 1.5rem; }

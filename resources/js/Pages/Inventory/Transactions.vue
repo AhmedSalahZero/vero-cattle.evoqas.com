@@ -43,6 +43,7 @@ function toggleUnmatched() {
 // ── Transaction Modal (receipt / consumption / adjustment) ────────
 const txModal      = ref(false)
 const txSubmitting = ref(false)
+const txDateError  = ref('')        // fiscal year validation error on date
 const poLineBeingReceived = ref(null)
 const txForm   = useForm({
     stock_id:    '',
@@ -60,12 +61,15 @@ const selectedLocationStock = computed(() =>
     props.locationStocks.find(s => s.location_id == txForm.location_id) ?? null
 )
 
-// Auto-fill unit_cost from location stock when location selected
+// Auto-fill unit_cost from location stock when location selected.
+// In PO context, only update stock_id — unit_cost is locked from the PO line.
 watch(() => txForm.location_id, (locId) => {
     const s = props.locationStocks.find(s => s.location_id == locId)
     if (s) {
-        txForm.stock_id   = s.stock_id
-        txForm.unit_cost  = s.unit_cost
+        txForm.stock_id = s.stock_id
+        if (!props.po) {
+            txForm.unit_cost = s.unit_cost
+        }
     }
 })
 
@@ -75,17 +79,22 @@ function openTxModal(poLine = null) {
     txForm.date = new Date().toISOString().slice(0,10)
     poLineBeingReceived.value = poLine ?? null
 
-       if (poLine) {
+    if (poLine) {
+        // PO context — pre-fill from the PO line; supplier and cost are locked
         txForm.location_id  = poLine.location_id ?? ''
         txForm.qty          = poLine.remaining_qty
-        txForm.unit_cost    = ''
+        txForm.unit_cost    = poLine.unit_cost_estimated ?? ''
         txForm.supplier_id  = props.po?.supplier_id ?? ''
         txForm.ref_no       = props.po?.po_reference ?? ''
+        // Resolve stock_id for the pre-filled location (may be 0 stock — that is fine)
+        const s = props.locationStocks.find(s => s.location_id == txForm.location_id)
+        if (s) txForm.stock_id = s.stock_id
     } else if (props.po) {
         txForm.supplier_id  = props.po.supplier_id ?? ''
         txForm.ref_no       = props.po.po_reference ?? ''
     }
 
+    txDateError.value = ''
     txModal.value = true
 }
 function submitTx() {
@@ -113,8 +122,12 @@ function submitTx() {
                 },
                 onError: (errors) => {
                     txSubmitting.value = false
-                    const firstError = Object.values(errors)[0]
-                    if (firstError) alert(firstError)
+                    if (errors.batch_date) {
+                        txDateError.value = errors.batch_date
+                    } else {
+                        const firstError = Object.values(errors)[0]
+                        if (firstError) alert(firstError)
+                    }
                 },
                 onFinish: () => { txSubmitting.value = false },
             }
@@ -592,9 +605,8 @@ const t = computed(() => lang.value === 'ar' ? {
                                     </div>
                                 </div>
 
-                                <!-- Type -->
-
-                                <div class="modal-span-2">
+                                <!-- Type — hidden in PO context (always receipt) -->
+                                <div v-if="!po" class="modal-span-2">
                                     <label class="cv-label">{{ t.txType }}</label>
                                     <div class="cv-btn-group">
                                         <button v-for="(label, val) in t.types" :key="val"
@@ -609,9 +621,10 @@ const t = computed(() => lang.value === 'ar' ? {
                                     <label class="cv-label">{{ t.txLoc }} <span class="cv-required">*</span></label>
                                     <select v-model="txForm.location_id" class="cv-select" :class="{'cv-input-error': txForm.errors.location_id}">
                                         <option value="">—</option>
-                                        <template v-if="props.po">
+                                        <template v-if="po">
+                                            <!-- PO context: show all company locations so user can choose where to put goods -->
                                             <option v-for="loc in locations" :key="loc.id" :value="loc.id">
-                                               {{ loc.name_en || loc.name_ar || loc.id }}
+                                                {{ lang==='ar' ? (loc.name_ar || loc.name_en) : (loc.name_en || loc.name_ar) }}
                                             </option>
                                         </template>
                                         <template v-else>
@@ -629,7 +642,11 @@ const t = computed(() => lang.value === 'ar' ? {
                                 <!-- Date -->
                                 <div>
                                     <label class="cv-label">{{ t.txDate }}</label>
-                                    <input v-model="txForm.date" type="date" class="cv-input"/>
+                                    <input v-model="txForm.date" type="date"
+                                           class="cv-input"
+                                           :class="{'cv-input-error': txDateError}"
+                                           @change="txDateError = ''"/>
+                                    <p v-if="txDateError" class="cv-error">{{ txDateError }}</p>
                                 </div>
 
                                 <!-- Qty -->
@@ -642,36 +659,64 @@ const t = computed(() => lang.value === 'ar' ? {
                                     <p v-if="txForm.errors.qty" class="cv-error">{{ txForm.errors.qty }}</p>
                                 </div>
 
-                                <!-- Unit cost (receipt only) -->
+                                <!-- Unit cost -->
+                                <!-- PO context: locked to PO line estimated cost — displayed read-only -->
+                                <!-- Normal context: editable (receipt only) -->
                                 <div v-if="txForm.type === 'receipt'" class="modal-span-2">
                                     <label class="cv-label">{{ t.txCost }}</label>
-                                    <input v-model="txForm.unit_cost" type="number" step="0.0001" min="0" class="cv-input"/>
-                                </div>
-                                <!-- 📌 InventoryReceiptAccrual — Supplier selector (receipt only) -->
-                                <!-- If supplier selected → receipt posts to AP Accruals liability  -->
-                                <!-- until matched to a supplier invoice. Leave blank = no accrual. -->
-                                <div class="modal-span-2" style="margin-top:0.9rem">
-                                    <label class="cv-label">{{ t.txSupplier }}</label>
-                                    <select v-model="txForm.supplier_id" class="cv-select">
-                                        <option value="">{{ t.txSupplierPlaceholder }}</option>
-                                        <option v-for="s in suppliers" :key="s.id" :value="s.id">
-                                            {{ lang==='ar' ? (s.name_ar||s.name_en) : (s.name_en||s.name_ar) }}
-                                        </option>
-                                    </select>
-                                    <!-- Accrual info note — shown once supplier is chosen -->
-                                    <div v-if="txForm.supplier_id" class="accrual-info-note mt-1">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="13" height="13" style="flex-shrink:0;margin-top:1px">
-                                            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                                        </svg>
-                                        <span>{{ t.txAccrualNote }}</span>
-                                    </div>
+                                    <template v-if="po">
+                                        <input :value="txForm.unit_cost" type="number" class="cv-input"
+                                               disabled style="opacity:.65;cursor:not-allowed"/>
+                                        <div style="font-size:.7rem;color:var(--cv-text-muted);margin-top:3px">
+                                            {{ lang==='ar' ? 'التكلفة محددة من أمر الشراء' : 'Cost fixed by the Purchase Order' }}
+                                        </div>
+                                    </template>
+                                    <template v-else>
+                                        <input v-model="txForm.unit_cost" type="number" step="0.0001" min="0" class="cv-input"/>
+                                    </template>
                                 </div>
 
-                                <!-- Ref No — shown only when supplier is selected -->
-                                <div v-if="txForm.supplier_id" class="modal-span-2" style="margin-top:0.5rem">
+                                <!-- Supplier -->
+                                <!-- PO context: locked to PO supplier — displayed read-only -->
+                                <!-- Normal context: editable dropdown -->
+                                <!-- 📌 InventoryReceiptAccrual — Supplier selector (receipt only) -->
+                                <div class="modal-span-2" style="margin-top:0.9rem">
+                                    <label class="cv-label">{{ t.txSupplier }}</label>
+                                    <template v-if="po">
+                                        <!-- Read-only display — supplier is locked to the PO -->
+                                        <input :value="lang==='ar'
+                                            ? (po.supplier?.name_ar || po.supplier?.name_en)
+                                            : (po.supplier?.name_en || po.supplier?.name_ar)"
+                                               type="text" class="cv-input"
+                                               disabled style="opacity:.65;cursor:not-allowed"/>
+                                        <div style="font-size:.7rem;color:var(--cv-text-muted);margin-top:3px">
+                                            {{ lang==='ar' ? 'المورد محدد من أمر الشراء' : 'Supplier fixed by the Purchase Order' }}
+                                        </div>
+                                    </template>
+                                    <template v-else>
+                                        <select v-model="txForm.supplier_id" class="cv-select">
+                                            <option value="">{{ t.txSupplierPlaceholder }}</option>
+                                            <option v-for="s in suppliers" :key="s.id" :value="s.id">
+                                                {{ lang==='ar' ? (s.name_ar||s.name_en) : (s.name_en||s.name_ar) }}
+                                            </option>
+                                        </select>
+                                        <!-- Accrual info note — shown once supplier is chosen -->
+                                        <div v-if="txForm.supplier_id" class="accrual-info-note mt-1">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="13" height="13" style="flex-shrink:0;margin-top:1px">
+                                                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                                            </svg>
+                                            <span>{{ t.txAccrualNote }}</span>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <!-- Ref No — PO context: read-only; normal: shown when supplier selected -->
+                                <div v-if="po || txForm.supplier_id" class="modal-span-2" style="margin-top:0.5rem">
                                     <label class="cv-label">{{ t.txRefNo }}</label>
                                     <input v-model="txForm.ref_no" type="text" class="cv-input"
-                                      :placeholder="lang==='ar' ? 'مثال: GRN-2026-0045' : 'e.g. GRN-2026-0045'"/>
+                                           :disabled="!!po"
+                                           :style="po ? 'opacity:.65;cursor:not-allowed' : ''"
+                                           :placeholder="lang==='ar' ? 'مثال: GRN-2026-0045' : 'e.g. GRN-2026-0045'"/>
                                 </div>
 
                                 <!-- Notes -->

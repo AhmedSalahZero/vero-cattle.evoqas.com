@@ -17,6 +17,7 @@ const props = defineProps({
     mode:      { type: String, default: 'create' },
     item:      { type: Object, default: null },
     feedItems: Array,
+    itemTemplates: { type: Array, default: () => [] },
     companies: { type: Array, default: () => [] },  // super admin only
 })
 
@@ -35,6 +36,18 @@ const form = useForm({
     feed_item_id:  props.item?.feed_item_id  ?? '',
     is_active:     props.item?.is_active     ?? true,
     notes:         props.item?.notes         ?? '',
+})
+// ── Template selector (create mode only) ─────────────────────
+// When user picks a template, name_en + name_ar + category auto-fill.
+const selectedTemplateId = ref(null)
+
+watch(selectedTemplateId, (id) => {
+    if (!id) return
+    const tpl = props.itemTemplates.find(t => t.id === parseInt(id))
+    if (!tpl) return
+    form.name_en  = tpl.name_en  ?? ''
+    form.name_ar  = tpl.name_ar  ?? ''
+    form.category = tpl.category ?? ''
 })
 
 // Unit presets per category
@@ -164,28 +177,63 @@ const t = computed(() => lang.value === 'ar' ? {
                                 : 'Item will be auto-created at all storage locations for this company' }}
                         </p>
                     </div>
-
                     <!-- Section 1 — Identity -->
                     <div class="cv-card cv-section-card">
                         <div class="cv-section-num">1</div>
                         <h3 class="cv-section-title">{{ t.s1 }}</h3>
                         <div class="cv-form-grid">
-
-                            <!-- Bilingual name §5 -->
+                         
+                  
+                          <!-- Bilingual name §5 -->
+                          <!-- Name — selector when templates exist, free text otherwise -->
                             <div class="cv-span-2">
                                 <label class="cv-label">
                                     {{ lang === 'ar' ? t.nameAr : t.nameEn }}
                                     <span class="cv-required">*</span>
                                 </label>
-                                <input v-if="lang==='ar'" v-model="form.name_ar" type="text" class="cv-input"
-                                    :class="{'cv-input-error': form.errors.name_ar || form.errors.name_en}"
-                                    :placeholder="lang==='ar'?'مثال: أوكسي تيتراسايكلين':''"  dir="rtl"/>
-                                <input v-else v-model="form.name_en" type="text" class="cv-input"
-                                    :class="{'cv-input-error': form.errors.name_en}"
-                                    placeholder="e.g. Oxytetracycline"/>
-                                <!-- Hidden counterpart always submitted -->
-                                <input v-show="false" v-model="form.name_en" type="text" v-if="lang==='ar'"/>
-                                <input v-show="false" v-model="form.name_ar" type="text" v-if="lang!=='ar'"/>
+
+                                <!-- CREATE MODE with templates: show selector -->
+                                <template v-if="!isEdit">
+                                    <select v-model="selectedTemplateId" class="cv-select"
+                                        :class="{'cv-input-error': form.errors.name_en || form.errors.name_ar}">
+                                        <option value="">
+                                            {{ lang === 'ar' ? '— اختر الصنف —' : '— Select item —' }}
+                                        </option>
+                                        <option v-for="tpl in itemTemplates" :key="tpl.id" :value="tpl.id">
+                                            {{ lang === 'ar' ? (tpl.name_ar || tpl.name_en) : (tpl.name_en || tpl.name_ar) }}
+                                        </option>
+                                    </select>
+                                    <!-- Hidden fields — always submit both name values (Bilingual Rule §4.2) -->
+                                    <input v-show="false" v-model="form.name_en" type="text" />
+                                    <input v-show="false" v-model="form.name_ar" type="text" />
+                                    <!-- No templates defined — block submission and direct to Settings -->
+                                    <div v-if="itemTemplates.length === 0" class="cv-alert-no-templates">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="15" height="15">
+                                            <circle cx="12" cy="12" r="10"/>
+                                            <line x1="12" y1="8" x2="12" y2="12"/>
+                                            <line x1="12" y1="16" x2="12.01" y2="16"/>
+                                        </svg>
+                                        {{ lang === 'ar'
+                                            ? 'لا توجد أصناف محددة. يرجى إضافة قوالب أصناف المخزون في الإعدادات أولاً.'
+                                            : 'No items defined yet. Please add inventory item templates in Settings first.' }}
+                                        <Link :href="route('settings.index')" class="cv-link" style="font-weight:700; margin-inline-start:0.5rem;">
+                                            {{ lang === 'ar' ? 'اذهب للإعدادات' : 'Go to Settings' }}
+                                        </Link>
+                                    </div>
+                                </template>
+
+                                <!-- EDIT MODE: free text input -->
+                                <template v-else>
+                                    <input v-if="lang==='ar'" v-model="form.name_ar" type="text" class="cv-input"
+                                        :class="{'cv-input-error': form.errors.name_ar || form.errors.name_en}"
+                                        :placeholder="lang==='ar'?'مثال: أوكسي تيتراسايكلين':''" dir="rtl"/>
+                                    <input v-else v-model="form.name_en" type="text" class="cv-input"
+                                        :class="{'cv-input-error': form.errors.name_en}"
+                                        placeholder="e.g. Oxytetracycline"/>
+                                    <input v-show="false" v-model="form.name_en" type="text" v-if="lang==='ar'"/>
+                                    <input v-show="false" v-model="form.name_ar" type="text" v-if="lang!=='ar'"/>
+                                </template>
+
                                 <p v-if="form.errors.name_en||form.errors.name_ar" class="cv-error">{{ form.errors.name_en||form.errors.name_ar }}</p>
                             </div>
 
@@ -195,10 +243,24 @@ const t = computed(() => lang.value === 'ar' ? {
                                 <input v-model="form.sku" type="text" class="cv-input" placeholder="MED-001"/>
                             </div>
 
-                            <!-- Category -->
+                            <!-- Category — auto-filled from template in create mode, editable in edit mode -->
                             <div>
                                 <label class="cv-label">{{ t.category }} <span class="cv-required">*</span></label>
-                                <select v-model="form.category" class="cv-select" :class="{'cv-input-error': form.errors.category}">
+
+                                <!-- CREATE MODE with templates: show as read-only badge (auto-filled) -->
+                                <div v-if="!isEdit && itemTemplates && itemTemplates.length > 0 && selectedTemplateId"
+                                    class="cv-auto-field">
+                                    <span class="cv-auto-value" style="color:var(--cv-text-primary); font-weight:600;">
+                                        {{ categoryOptions.find(c => c.val === form.category)?.label || form.category }}
+                                    </span>
+                                    <span class="cv-auto-badge">
+                                        {{ lang === 'ar' ? 'تلقائي' : 'AUTO' }}
+                                    </span>
+                                </div>
+
+                                <!-- Show dropdown if no template selected yet, or in edit mode -->
+                                <select v-else v-model="form.category" class="cv-select"
+                                    :class="{'cv-input-error': form.errors.category}">
                                     <option v-for="c in categoryOptions" :key="c.val" :value="c.val">{{ c.label }}</option>
                                 </select>
                             </div>
@@ -276,7 +338,7 @@ const t = computed(() => lang.value === 'ar' ? {
 
                     <div class="cv-form-actions">
                         <Link :href="route('inventory.index')" class="cv-btn cv-btn-ghost">{{ t.cancel }}</Link>
-                        <button type="submit" class="cv-btn cv-btn-amber" :disabled="form.processing">
+                        <button type="submit" class="cv-btn cv-btn-amber" :disabled="form.processing || (!isEdit && itemTemplates.length === 0)">
                             <svg v-if="form.processing" class="cv-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
                             {{ t.save }}
                         </button>
@@ -308,7 +370,9 @@ const t = computed(() => lang.value === 'ar' ? {
 .preset-chip { padding:0.15rem 0.55rem; border-radius:999px; font-size:0.72rem; border:1px solid var(--cv-border); background:transparent; color:var(--cv-text-secondary); cursor:pointer; transition:all 0.15s; }
 .preset-chip:hover { border-color:var(--cv-amber); color:var(--cv-amber); }
 .preset-active { background:var(--cv-amber); color:#000; border-color:var(--cv-amber); font-weight:600; }
-.cv-info-box { display:flex; align-items:center; gap:0.5rem; padding:0.6rem 0.9rem; border-radius:8px; background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.2); color:var(--cv-blue-text); font-size:0.82rem; }
+.cv-auto-field { display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0.75rem; background:var(--cv-bg-card-alt); border:1px solid var(--cv-border-md); border-radius:7px; min-height:38px; }
+.cv-auto-badge { font-size:0.65rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:0.15rem 0.45rem; border-radius:4px; background:var(--cv-green-dim); color:var(--cv-green-bright); border:1px solid var(--cv-green-border); white-space:nowrap; }
+.cv-alert-no-templates { display:flex; align-items:center; gap:0.5rem; margin-top:0.5rem; padding:0.6rem 0.9rem; border-radius:7px; background:rgba(232,160,48,0.08); border:1px solid var(--cv-amber-border); color:var(--cv-amber-text); font-size:0.82rem; flex-wrap:wrap; }
 .cv-spin { animation:spin 0.8s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 @media(max-width:600px) { .cv-form-grid { grid-template-columns:1fr; } .cv-span-2 { grid-column:span 1; } }

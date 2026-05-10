@@ -44,6 +44,7 @@ const props = defineProps({
     farms:     { type: Array,  default: () => [] },
     lots:      { type: Array,  default: () => [] },
     suppliers: { type: Array,  default: () => [] },
+    breeds:    { type: Array,  default: () => [] },
     po:        { type: Object, default: null },   // PO context — injected by ProcurementController::receive()
     mode:      { type: String, default: null },   // 'purchase' when coming from Receive Animals button
 })
@@ -99,6 +100,8 @@ const L = computed(() => locale.value === 'ar' ? {
     sexCastrated:       'مخصي',
     breed:              'السلالة',
     breedPh:            'مثال: فريزيان، عربي...',
+    breedSelect:        '-- اختر السلالة --',
+    breedFallback:      'أو أدخل يدوياً',
     color:              'اللون (اختياري)',
     colorPh:            'مثال: بني، أبلق...',
     dob:                'تاريخ الميلاد (اختياري)',
@@ -226,6 +229,8 @@ const L = computed(() => locale.value === 'ar' ? {
     sexCastrated:       'Castrated',
     breed:              'Breed',
     breedPh:            'e.g. Friesian, Angus...',
+    breedSelect:        '-- Select Breed --',
+    breedFallback:      'or type manually',
     color:              'Color (Optional)',
     colorPh:            'e.g. Brown, Pied...',
     dob:                'Date of Birth (Optional)',
@@ -922,7 +927,14 @@ const previewPalette = PALETTES[(props.animal?.id ?? 0) % PALETTES.length]
                                 <!-- Breed -->
                                 <div class="cv-field cv-field-md">
                                     <label class="cv-label">{{ L.breed }}</label>
-                                    <input v-model="bulk.breed" class="cv-input" :placeholder="L.breedPh" />
+                                    <select v-if="breeds && breeds.length > 0" v-model="bulk.breed" class="cv-select">
+                                        <option value="">{{ L.breedSelect }}</option>
+                                        <option v-for="b in breeds" :key="b.id"
+                                            :value="locale === 'ar' ? (b.name_ar || b.name_en) : (b.name_en || b.name_ar)">
+                                            {{ locale === 'ar' ? (b.name_ar || b.name_en) : (b.name_en || b.name_ar) }}
+                                        </option>
+                                    </select>
+                                    <input v-else v-model="bulk.breed" class="cv-input" :placeholder="L.breedPh" />
                                 </div>
 
                                 <!-- Color -->
@@ -1554,9 +1566,16 @@ const previewPalette = PALETTES[(props.animal?.id ?? 0) % PALETTES.length]
                                     </select>
                                     <div v-if="form.errors.sex" class="cv-field-error">{{ form.errors.sex }}</div>
                                 </div>
-                                <div class="cv-field cv-field-md">
+                               <div class="cv-field cv-field-md">
                                     <label class="cv-label">{{ L.breed }}</label>
-                                    <input v-model="form.breed" class="cv-input" :placeholder="L.breedPh" />
+                                    <select v-if="breeds && breeds.length > 0" v-model="form.breed" class="cv-select">
+                                        <option value="">{{ L.breedSelect }}</option>
+                                        <option v-for="b in breeds" :key="b.id"
+                                            :value="locale === 'ar' ? (b.name_ar || b.name_en) : (b.name_en || b.name_ar)">
+                                            {{ locale === 'ar' ? (b.name_ar || b.name_en) : (b.name_en || b.name_ar) }}
+                                        </option>
+                                    </select>
+                                    <input v-else v-model="form.breed" class="cv-input" :placeholder="L.breedPh" />
                                 </div>
                                 <div class="cv-field cv-field-md">
                                     <label class="cv-label">{{ L.color }}</label>

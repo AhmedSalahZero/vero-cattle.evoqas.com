@@ -16,7 +16,7 @@ class Lot extends Model
         'name',
         'lot_number',
         'start_date',
-        'target_slaughter_date',
+        'target_sale_date',   // renamed from target_slaughter_date — Migration 071
         'closed_date',
         'pen',
         'status',
@@ -25,9 +25,9 @@ class Lot extends Model
     ];
 
     protected $casts = [
-        'start_date'            => 'date',
-        'target_slaughter_date' => 'date',
-        'closed_date'           => 'date',
+        'start_date'       => 'date',
+        'target_sale_date' => 'date',   // renamed from target_slaughter_date — Migration 071
+        'closed_date'      => 'date',
     ];
 
     // ── Relationships ─────────────────────────────────────────────

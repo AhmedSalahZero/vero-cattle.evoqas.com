@@ -24,10 +24,12 @@
  *   templates        : { 'Farm Manager': string[], ... }
  *   allModules       : string[]
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch , reactive} from 'vue'
 import { Head, Link, useForm } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { usePermissions } from '@/Composables/usePermissions'
+
+defineOptions({ layout: AuthenticatedLayout })
 
 const props = defineProps({
     user:             { type: Object, default: null },
@@ -55,6 +57,7 @@ const quotaFull = computed(() =>
 // perms is a reactive object: { 'view animals': true, 'create animals': false, ... }
 function matrixToPermsMap(matrix) {
     const map = {}
+    if (!matrix || !Array.isArray(matrix)) return map
     matrix.forEach(row => {
         ;['view', 'create', 'edit', 'delete'].forEach(action => {
             map[`${action} ${row.module}`] = row[action] ?? false
@@ -63,11 +66,11 @@ function matrixToPermsMap(matrix) {
     return map
 }
 
-const perms = ref(matrixToPermsMap(props.permissionMatrix))
+const perms = reactive(matrixToPermsMap(props.permissionMatrix ?? []))
 
 // Flat array of checked permission strings — this is what gets submitted
 const permissionsArray = computed(() =>
-    Object.entries(perms.value)
+    Object.entries(perms)
         .filter(([, checked]) => checked)
         .map(([name]) => name)
 )
@@ -79,22 +82,22 @@ function loadTemplate(templateName) {
     if (!templateName || !props.templates[templateName]) return
     const tplPermissions = props.templates[templateName]
     // Reset all to false first
-    Object.keys(perms.value).forEach(k => { perms.value[k] = false })
+    Object.keys(perms).forEach(k => { perms[k] = false })
     // Set template ones to true
     tplPermissions.forEach(p => {
-        if (p in perms.value) perms.value[p] = true
+        if (p in perms) perms[p] = true
     })
 }
 
 watch(selectedTemplate, (val) => { if (val) loadTemplate(val) })
 
 function clearAll() {
-    Object.keys(perms.value).forEach(k => { perms.value[k] = false })
+    Object.keys(perms).forEach(k => { perms[k] = false })
     selectedTemplate.value = ''
 }
 
 function checkAll() {
-    Object.keys(perms.value).forEach(k => { perms.value[k] = true })
+    Object.keys(perms).forEach(k => { perms[k] = true })
     selectedTemplate.value = ''
 }
 
@@ -129,7 +132,9 @@ const moduleLabels = {
     customers:        { en: 'Customers',         ar: 'العملاء' },
     suppliers:        { en: 'Suppliers',         ar: 'الموردون' },
     fixed_assets:     { en: 'Fixed Assets',      ar: 'الأصول الثابتة' },
-    reports:          { en: 'Reports',           ar: 'التقارير' },
+    statements:       { en: 'Statement',           ar: 'كشوف الحساب' },
+    reports:          { en: 'Financial Reports',           ar: 'التقارير المالية' },
+    analytics:        { en: 'Analytical Reports',           ar: ' التقارير التحليلية' },
     settings:         { en: 'Settings',          ar: 'الإعدادات' },
     tasks:            { en: 'Tasks',             ar: 'المهام' },
 }
@@ -141,18 +146,18 @@ const moduleGroups = [
     { label: 'Feed & Inventory', labelAr: 'العلف والمخزون', modules: ['feed', 'rations', 'inventory'] },
     { label: 'CRM & Assets', labelAr: 'العملاء والموردون والأصول', modules: ['customers', 'suppliers', 'fixed_assets'] },
     { label: 'Operations', labelAr: 'العمليات', modules: ['procurement', 'slaughter', 'sales'] },
-    { label: 'Accounting', labelAr: 'المحاسبة', modules: ['accounts', 'journal_entries', 'ap_invoices', 'ar_invoices', 'payments', 'bank_statements','fx_rates', 'fiscal_years', 'budgets'] },
-    { label: 'Reports & Other', labelAr: 'التقارير وأخرى', modules: ['reports', 'settings', 'tasks'] },
+    { label: 'Accounting', labelAr: 'المحاسبة', modules: ['accounts', 'journal_entries', 'ap_invoices', 'ar_invoices', 'payments', 'fx_rates', 'fiscal_years' ] },
+    { label: 'Reports & Other', labelAr: 'التقارير وأخرى', modules: ['bank_statements','statements','reports', 'analytics','budgets', 'settings', 'tasks'] },
 ]
 
 function isRowAllChecked(module) {
-    return ['view','create','edit','delete'].every(a => perms.value[`${a} ${module}`])
+    return ['view','create','edit','delete'].every(a => perms[`${a} ${module}`])
 }
 
 function toggleRow(module) {
     const allChecked = isRowAllChecked(module)
     ;['view','create','edit','delete'].forEach(a => {
-        perms.value[`${a} ${module}`] = !allChecked
+        perms[`${a} ${module}`] = !allChecked
     })
 }
 
@@ -164,9 +169,13 @@ function toggleGroup(modules) {
     const allChecked = isGroupAllChecked(modules)
     modules.forEach(m => {
         ;['view','create','edit','delete'].forEach(a => {
-            perms.value[`${a} ${m}`] = !allChecked
+            perms[`${a} ${m}`] = !allChecked
         })
     })
+}
+function togglePerm(action, module) {
+    const key = `${action} ${module}`
+    perms[key] = !perms[key]
 }
 
 // Count checked permissions for display
@@ -261,26 +270,10 @@ const roleOptions = ['Company Admin', 'Farm Manager', 'Veterinarian', 'Feed Mana
 
 <template>
     <Head :title="isEdit ? `Edit User — ${user?.name_en}` : 'New User'" />
-    <AuthenticatedLayout>
-        <template #header>
-            <span class="eyebrow-crumb">
-                {{ isSuperAdmin ? 'Super Admin' : 'Settings' }}
-            </span>
-            <svg class="w-3 h-3 mx-1.5 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-            </svg>
-            <Link :href="route('users.index')" class="crumb-link">Users</Link>
-            <svg class="w-3 h-3 mx-1.5 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-            </svg>
-            <span style="font-size:0.8125rem;font-weight:500;color:var(--cv-text-secondary)">
-                {{ isEdit ? 'Edit User' : 'New User' }}
-            </span>
-        </template>
 
-        <div class="pg-shell">
-
-            <!-- ══ HERO ════════════════════════════════════════════ -->
+    <div class="pg-shell">
+        
+             <!-- ══ HERO ════════════════════════════════════════════ -->
             <div class="pg-hero">
                 <div class="pg-hero-glow"></div>
                 <div class="pg-hero-dots"></div>
@@ -540,23 +533,20 @@ const roleOptions = ['Company Admin', 'Farm Manager', 'Veterinarian', 'Feed Mana
                                     </div>
                                     <!-- Action checkboxes -->
                                     <div v-for="action in ['view','create','edit','delete']" :key="action" class="perm-action-col">
-                                        <label class="perm-check-wrap">
-                                            <input type="checkbox"
-                                                   v-model="perms[`${action} ${module}`]"
-                                                   class="sr-only"/>
-                                            <span class="perm-check"
-                                                  :class="{
-                                                      'perm-check-view':   perms[`${action} ${module}`] && action === 'view',
-                                                      'perm-check-create': perms[`${action} ${module}`] && action === 'create',
-                                                      'perm-check-edit':   perms[`${action} ${module}`] && action === 'edit',
-                                                      'perm-check-delete': perms[`${action} ${module}`] && action === 'delete',
-                                                  }">
-                                                <svg v-if="perms[`${action} ${module}`]" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3.5">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
-                                                </svg>
-                                            </span>
-                                        </label>
-                                    </div>
+                                   <div class="perm-check-wrap" @click="togglePerm(action, module)">
+                                    <span class="perm-check"
+                                        :class="{
+                                            'perm-check-view':   perms[`${action} ${module}`] && action === 'view',
+                                            'perm-check-create': perms[`${action} ${module}`] && action === 'create',
+                                            'perm-check-edit':   perms[`${action} ${module}`] && action === 'edit',
+                                            'perm-check-delete': perms[`${action} ${module}`] && action === 'delete',
+                                        }">
+                                        <svg v-if="perms[`${action} ${module}`]" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3.5">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
+                                        </svg>
+                                    </span>
+                                </div>
+                                   </div>
                                     <!-- Row toggle -->
                                     <div class="perm-all-col">
                                         <button type="button"
@@ -745,7 +735,7 @@ const roleOptions = ['Company Admin', 'Farm Manager', 'Veterinarian', 'Feed Mana
                 </form>
             </div>
         </div>
-    </AuthenticatedLayout>
+    
 </template>
 
 <style scoped>

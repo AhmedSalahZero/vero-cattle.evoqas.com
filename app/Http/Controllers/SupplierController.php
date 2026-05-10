@@ -123,9 +123,8 @@ class SupplierController extends Controller
         // §5.3 — convert Inertia '' → null before validation
         $this->sanitizeNullableFields($request);
 
-        $companyId = $authUser->is_super_admin
-            ? $request->input('company_id', $authUser->company_id)
-            : $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $validated = $this->validateSupplier($request);
 

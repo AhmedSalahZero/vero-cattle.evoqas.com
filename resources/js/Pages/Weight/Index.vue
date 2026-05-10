@@ -1,20 +1,19 @@
 <script setup>
 // ══════════════════════════════════════════════════════════════════
 //  VERO Cattle Management — Weight/Index.vue
-//  Index-only pattern — all CRUD via slide-in panels.
-//  No navigation away from /weight at any point.
+//
+//  SESSION-GROUPED layout:
+//    Each row = one weighing session (same lot + date + recorder).
+//    Click a session row → expands to show individual animals.
+//
+//  Sold/slaughtered animals:
+//    Edit and Delete buttons are hidden for sold/slaughtered animals.
+//    The server also blocks those requests with 422.
 //
 //  Panels:
 //    A) Single entry  — one animal, date, weight_kg
 //    B) Batch by lot  — one lot, N animals in table rows
 //    C) Edit          — correct a single existing record
-//
-//  Design rules followed:
-//    § Global cv- classes from app.css — zero scoped overrides
-//    § Arabic mode — ALL text in Arabic (labels, placeholders, badges)
-//    § v-show="false" + v-model for bilingual counterpart fields
-//    § text-start everywhere — never text-left
-//    § --cv- tokens only — no hardcoded hex
 // ══════════════════════════════════════════════════════════════════
 
 import { ref, computed, watch } from 'vue'
@@ -31,23 +30,48 @@ const page = usePage()
 
 // ── Props ──────────────────────────────────────────────────────────
 const props = defineProps({
-    records:  Object,   // paginated — { data[], links[], meta{} }
-    lots:     Array,    // [{ id, name, farm: { name_en, name_ar } }]
-    filters:  Object,   // { lot_id, animal_id, date_from, date_to }
+    sessions: Array,   // grouped sessions from controller
+    lots:     Array,
+    filters:  Object,
+    kpis:     Object,  // { total_records, avg_weight, avg_adg, last_date }
 })
 
 // ── Permissions ────────────────────────────────────────────────────
-const authUser  = computed(() => page.props.auth?.user)
 const { can } = usePermissions()
 const canCreate = computed(() => can('create weight'))
 const canEdit   = computed(() => can('edit weight'))
 const canDelete = computed(() => can('delete weight'))
 
+// ── Expanded session rows ──────────────────────────────────────────
+const expandedSessions = ref(new Set())
+function toggleSession(key) {
+    if (expandedSessions.value.has(key)) {
+        expandedSessions.value.delete(key)
+    } else {
+        expandedSessions.value.add(key)
+    }
+    // Force reactivity on Set
+    expandedSessions.value = new Set(expandedSessions.value)
+}
+function isExpanded(key) {
+    return expandedSessions.value.has(key)
+}
+
 // ── Filter state ───────────────────────────────────────────────────
-const filterLot     = ref(props.filters?.lot_id   ?? '')
+const filterLot      = ref(props.filters?.lot_id    ?? '')
 const filterDateFrom = ref(props.filters?.date_from ?? '')
 const filterDateTo   = ref(props.filters?.date_to   ?? '')
-const searchTag      = ref('')
+const searchLot      = ref('')
+
+const displaySessions = computed(() => {
+    if (!searchLot.value.trim()) return props.sessions
+    const q = searchLot.value.toLowerCase()
+    return props.sessions.filter(s =>
+        s.lot_name?.toLowerCase().includes(q) ||
+        s.session_ref?.toLowerCase().includes(q) ||
+        s.recorder?.toLowerCase().includes(q)
+    )
+})
 
 function applyFilters() {
     router.get(route('weights.index'), {
@@ -61,48 +85,36 @@ function clearFilters() {
     filterLot.value = ''
     filterDateFrom.value = ''
     filterDateTo.value = ''
-    searchTag.value = ''
+    searchLot.value = ''
     router.get(route('weights.index'))
 }
 
-// ── Client-side tag search ─────────────────────────────────────────
-const displayRecords = computed(() => {
-    if (!searchTag.value.trim()) return props.records.data
-    const q = searchTag.value.toLowerCase()
-    return props.records.data.filter(r =>
-        r.animal?.tag?.toLowerCase().includes(q) ||
-        r.animal?.breed?.toLowerCase().includes(q)
-    )
-})
-
-// ── KPI summary from current page ─────────────────────────────────
-const kpis = computed(() => {
-    const data = props.records.data
-    if (!data.length) return { count: 0, avgWeight: null, avgAdg: null, lastDate: null }
-    const total   = data.reduce((s, r) => s + parseFloat(r.weight_kg), 0)
-    const adgRows = data.filter(r => r.adg_kg != null)
-    const adgSum  = adgRows.reduce((s, r) => s + parseFloat(r.adg_kg), 0)
-    const dates   = data.map(r => r.date).sort()
-    return {
-        count:     props.records.meta?.total ?? data.length,
-        avgWeight: +(total / data.length).toFixed(2),
-        avgAdg:    adgRows.length ? +(adgSum / adgRows.length).toFixed(3) : null,
-        lastDate:  dates[dates.length - 1] ?? null,
-    }
-})
-
 // ── ADG badge colour helper ────────────────────────────────────────
 function adgClass(val) {
-    if (val == null) return 'cv-badge-neutral'
+    if (val == null || val === 0) return 'cv-badge-neutral'
     const v = parseFloat(val)
-    if (v >= 1.2)  return 'cv-badge-green'
-    if (v >= 0.7)  return 'cv-badge-amber'
+    if (v >= 1.2) return 'cv-badge-green'
+    if (v >= 0.7) return 'cv-badge-amber'
     return 'cv-badge-danger'
 }
 
+// ── Number formatter ───────────────────────────────────────────────
+function fmt(val, decimals = 2) {
+    if (val == null) return '—'
+    const num = parseFloat(val)
+    return isNaN(num) ? '—' : num.toLocaleString(lang.value === 'ar' ? 'ar-EG' : 'en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+    })
+}
+
+// ── Is animal locked (sold or slaughtered) ─────────────────────────
+function isLocked(animal) {
+    return animal?.status === 'sold' || animal?.status === 'slaughtered'
+}
+
 // ── Panel A — Single entry ─────────────────────────────────────────
-const panelA      = ref(false)
-const panelALots  = computed(() => props.lots)
+const panelA        = ref(false)
 const panelAAnimals = ref([])
 
 const formA = useForm({
@@ -116,9 +128,6 @@ const formA = useForm({
     notes:           '',
 })
 
-// When lot changes in Panel A → load animals via axios (authenticated AJAX).
-// fetch() sends no CSRF/session cookie reliably — Laravel returns 302 to /login.
-// axios carries the XSRF-TOKEN + session automatically (configured in bootstrap.js).
 watch(() => formA.lot_id, async (lotId) => {
     panelAAnimals.value = []
     formA.animal_id = ''
@@ -152,11 +161,10 @@ const batchDate     = ref(new Date().toISOString().slice(0, 10))
 const batchSession  = ref('')
 const batchScale    = ref('')
 const batchNotes    = ref('')
-const batchReadings = ref([])   // [{ animal_id, tag, breed, weight_kg }]
+const batchReadings = ref([])
 const batchErrors   = ref({})
 const batchLoading  = ref(false)
 
-// Panel B — same axios fix for batch lot animal loading
 watch(batchLotId, async (lotId) => {
     batchAnimals.value  = []
     batchReadings.value = []
@@ -176,13 +184,13 @@ watch(batchLotId, async (lotId) => {
 })
 
 function openPanelB() {
-    batchLotId.value   = ''
-    batchDate.value    = new Date().toISOString().slice(0, 10)
-    batchSession.value = ''
-    batchScale.value   = ''
-    batchNotes.value   = ''
+    batchLotId.value    = ''
+    batchDate.value     = new Date().toISOString().slice(0, 10)
+    batchSession.value  = ''
+    batchScale.value    = ''
+    batchNotes.value    = ''
     batchReadings.value = []
-    batchErrors.value  = {}
+    batchErrors.value   = {}
     panelB.value = true
 }
 
@@ -191,7 +199,7 @@ async function submitBatch() {
     const filled = batchReadings.value.filter(r => r.weight_kg !== '' && r.weight_kg != null)
     if (!filled.length) {
         batchErrors.value.readings = lang.value === 'ar'
-            ? 'أدخل وزناً لماشية واحد على الأقل'
+            ? 'أدخل وزناً لماشية واحدة على الأقل'
             : 'Enter weight for at least one animal'
         return
     }
@@ -213,9 +221,9 @@ async function submitBatch() {
     }
 }
 
-// ── Panel C — Edit ─────────────────────────────────────────────────
-const panelC       = ref(false)
-const editRecord   = ref(null)
+// ── Panel C — Edit single record ───────────────────────────────────
+const panelC     = ref(false)
+const editRecord = ref(null)
 
 const formC = useForm({
     date:            '',
@@ -226,7 +234,7 @@ const formC = useForm({
 })
 
 function openEdit(record) {
-    editRecord.value = record
+    editRecord.value      = record
     formC.date            = record.date
     formC.weight_kg       = record.weight_kg
     formC.scale_reference = record.scale_reference ?? ''
@@ -255,47 +263,22 @@ function doDelete() {
         onSuccess: () => { deleteModal.value = false }
     })
 }
-
-// ── Lot label helper ───────────────────────────────────────────────
-function lotLabel(lot) {
-    if (!lot) return '—'
-    return `${lot.name} — ${n(lot.farm, 'name')}`
-}
-
-// ── Pagination ─────────────────────────────────────────────────────
-function goToPage(url) {
-    if (!url) return
-    router.get(url, {}, { preserveState: true })
-}
-
-// ── Number formatter ───────────────────────────────────────────────
-function fmt(val, decimals = 2) {
-    if (val == null) return '—'
-    const n = parseFloat(val)
-    return isNaN(n) ? '—' : n.toLocaleString(lang.value === 'ar' ? 'ar-EG' : 'en-US', {
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
-    })
-}
 </script>
 
 <template>
-    
-        <div :dir="isRtl ? 'rtl' : 'ltr'">
+    <div :dir="isRtl ? 'rtl' : 'ltr'">
+
     <!-- ══════════════════════════════════════════════════════════
          PAGE HERO
     ══════════════════════════════════════════════════════════ -->
     <div class="cv-page-hero">
         <div class="cv-page-hero-eyebrow">
-            <!-- Scale / weight icon -->
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="5" r="3"/>
                 <path d="M6.5 8a7 7 0 1 0 11 0"/>
                 <line x1="12" y1="2" x2="12" y2="8"/>
                 <line x1="4" y1="20" x2="20" y2="20"/>
-                <line x1="8" y1="14" x2="8" y2="20"/>
-                <line x1="16" y1="14" x2="16" y2="20"/>
             </svg>
             {{ lang === 'ar' ? 'الغذاء والوزن' : 'Feed & Weight' }}
         </div>
@@ -304,14 +287,13 @@ function fmt(val, decimals = 2) {
         </div>
         <div class="cv-page-hero-sub">
             {{ lang === 'ar'
-                ? 'تتبع أوزان الماشيةات الفردية ومؤشر معدل النمو اليومي'
-                : 'Track individual animal weights and average daily gain metrics' }}
+                ? 'جلسات الوزن مجمّعة — انقر على أي جلسة لعرض تفاصيل الماشيةات'
+                : 'Weighing sessions grouped by date & lot — click a session to expand animals' }}
         </div>
         <div class="cv-page-hero-actions" v-if="canCreate">
             <button class="cv-btn cv-btn-ghost" @click="openPanelB">
-                <!-- Clipboard list icon -->
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                     stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="8" y="2" width="8" height="4" rx="1"/>
                     <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
                     <line x1="9" y1="12" x2="15" y2="12"/>
@@ -321,7 +303,7 @@ function fmt(val, decimals = 2) {
             </button>
             <button class="cv-btn cv-btn-amber" @click="openPanelA">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                     stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"/>
                     <line x1="12" y1="8" x2="12" y2="16"/>
                     <line x1="8" y1="12" x2="16" y2="12"/>
@@ -335,37 +317,21 @@ function fmt(val, decimals = 2) {
          KPI STAT CARDS
     ══════════════════════════════════════════════════════════ -->
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1rem;margin:1.5rem">
-        
-        <!-- Total records -->
         <div class="cv-stat-card cv-stat-card-blue">
-            <div class="cv-stat-card-label">
-                {{ lang === 'ar' ? 'إجمالي السجلات' : 'Total Records' }}
-            </div>
-            <div class="cv-stat-card-value">{{ kpis.count.toLocaleString() }}</div>
+            <div class="cv-stat-card-label">{{ lang === 'ar' ? 'إجمالي السجلات' : 'Total Records' }}</div>
+            <div class="cv-stat-card-value">{{ (kpis.total_records ?? 0).toLocaleString() }}</div>
         </div>
-
-        <!-- Avg weight -->
         <div class="cv-stat-card cv-stat-card-green">
-            <div class="cv-stat-card-label">
-                {{ lang === 'ar' ? 'متوسط الوزن (كجم)' : 'Avg Weight (kg)' }}
-            </div>
-            <div class="cv-stat-card-value">{{ kpis.avgWeight != null ? fmt(kpis.avgWeight) : '—' }}</div>
+            <div class="cv-stat-card-label">{{ lang === 'ar' ? 'متوسط الوزن (كجم)' : 'Avg Weight (kg)' }}</div>
+            <div class="cv-stat-card-value">{{ kpis.avg_weight != null ? fmt(kpis.avg_weight) : '—' }}</div>
         </div>
-
-        <!-- Avg ADG -->
         <div class="cv-stat-card cv-stat-card-amber">
-            <div class="cv-stat-card-label">
-                {{ lang === 'ar' ? 'متوسط النمو اليومي (كجم/يوم)' : 'Avg ADG (kg/day)' }}
-            </div>
-            <div class="cv-stat-card-value">{{ kpis.avgAdg != null ? fmt(kpis.avgAdg, 3) : '—' }}</div>
+            <div class="cv-stat-card-label">{{ lang === 'ar' ? 'متوسط النمو اليومي' : 'Avg ADG (kg/day)' }}</div>
+            <div class="cv-stat-card-value">{{ kpis.avg_adg != null ? fmt(kpis.avg_adg, 3) : '—' }}</div>
         </div>
-
-        <!-- Last weigh date -->
         <div class="cv-stat-card cv-stat-card-blue">
-            <div class="cv-stat-card-label">
-                {{ lang === 'ar' ? 'آخر تاريخ وزن' : 'Last Weigh Date' }}
-            </div>
-            <div class="cv-stat-card-value" style="font-size:1rem">{{ kpis.lastDate ?? '—' }}</div>
+            <div class="cv-stat-card-label">{{ lang === 'ar' ? 'آخر جلسة وزن' : 'Last Weigh Date' }}</div>
+            <div class="cv-stat-card-value" style="font-size:1rem">{{ kpis.last_date ?? '—' }}</div>
         </div>
     </div>
 
@@ -375,18 +341,16 @@ function fmt(val, decimals = 2) {
     <div class="cv-card" style="margin-bottom:1.25rem;padding:1rem">
         <div style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:flex-end">
 
-            <!-- Search by tag -->
+            <!-- Search sessions -->
             <div class="cv-field" style="flex:1;min-width:160px">
-                <label class="cv-label">
-                    {{ lang === 'ar' ? 'بحث بالرقم' : 'Search Tag' }}
-                </label>
+                <label class="cv-label">{{ lang === 'ar' ? 'بحث' : 'Search' }}</label>
                 <div class="cv-input-icon-wrap">
                     <svg class="cv-input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none"
                          stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                     </svg>
-                    <input v-model="searchTag" class="cv-input" type="text"
-                           :placeholder="lang === 'ar' ? 'رقم الماشية أو السلالة...' : 'Tag or breed…'" />
+                    <input v-model="searchLot" class="cv-input" type="text"
+                           :placeholder="lang === 'ar' ? 'القطيع أو المُسجِّل أو الجلسة...' : 'Lot, recorder or session…'" />
                 </div>
             </div>
 
@@ -413,7 +377,6 @@ function fmt(val, decimals = 2) {
                 <input v-model="filterDateTo" class="cv-input" type="date" />
             </div>
 
-            <!-- Actions -->
             <div style="display:flex;gap:0.5rem">
                 <button class="cv-btn cv-btn-amber" @click="applyFilters">
                     {{ lang === 'ar' ? 'تصفية' : 'Filter' }}
@@ -426,162 +389,239 @@ function fmt(val, decimals = 2) {
     </div>
 
     <!-- ══════════════════════════════════════════════════════════
-         RECORDS TABLE
+         SESSION TABLE
     ══════════════════════════════════════════════════════════ -->
     <div class="cv-card" style="overflow:hidden">
 
         <!-- Empty state -->
-        <div v-if="!displayRecords.length" style="padding:3rem;text-align:center">
+        <div v-if="!displaySessions.length" style="padding:3rem;text-align:center">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
-                 style="color:var(--cv-text-muted);margin:0 auto 1rem" aria-hidden="true">
+                 style="color:var(--cv-text-muted);margin:0 auto 1rem">
                 <circle cx="12" cy="5" r="3"/>
                 <path d="M6.5 8a7 7 0 1 0 11 0"/>
                 <line x1="12" y1="2" x2="12" y2="8"/>
                 <line x1="4" y1="20" x2="20" y2="20"/>
             </svg>
             <div style="color:var(--cv-text-muted);font-size:0.9rem">
-                {{ lang === 'ar' ? 'لا توجد سجلات وزن' : 'No weight records found' }}
+                {{ lang === 'ar' ? 'لا توجد جلسات وزن' : 'No weighing sessions found' }}
             </div>
         </div>
 
-        <!-- Table -->
         <div v-else style="overflow-x:auto">
-            <table class="cv-table" style="min-width:820px">
+            <table class="cv-table" style="min-width:700px">
                 <thead>
                     <tr>
+                        <!-- Expand toggle column -->
+                        <th style="width:36px"></th>
                         <th class="text-start">{{ lang === 'ar' ? 'التاريخ' : 'Date' }}</th>
-                        <th class="text-start">{{ lang === 'ar' ? 'الماشية' : 'Animal' }}</th>
                         <th class="text-start">{{ lang === 'ar' ? 'القطيع' : 'Lot' }}</th>
-                        <th class="text-start">{{ lang === 'ar' ? 'الوزن (كجم)' : 'Weight (kg)' }}</th>
-                        <th class="text-start">{{ lang === 'ar' ? 'معدل النمو اليومي' : 'ADG' }}</th>
-                        <th class="text-start">{{ lang === 'ar' ? 'إجمالي النمو' : 'Total Gain' }}</th>
-                        <th class="text-start">{{ lang === 'ar' ? 'أيام التسمين' : 'Days' }}</th>
+                        <th class="text-start">{{ lang === 'ar' ? 'رقم الجلسة' : 'Session Ref' }}</th>
+                        <th class="text-start">{{ lang === 'ar' ? 'عدد الماشيةات' : 'Animals' }}</th>
+                        <th class="text-start">{{ lang === 'ar' ? 'متوسط الوزن' : 'Avg Weight' }}</th>
+                        <th class="text-start">{{ lang === 'ar' ? 'متوسط النمو' : 'Avg ADG' }}</th>
                         <th class="text-start">{{ lang === 'ar' ? 'المُسجِّل' : 'Recorder' }}</th>
-                        <th class="text-start">{{ lang === 'ar' ? 'الإجراءات' : 'Actions' }}</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="record in displayRecords" :key="record.id">
+                    <template v-for="session in displaySessions" :key="session.key">
 
-                        <!-- Date -->
-                        <td>
-                            <span style="color:var(--cv-text-secondary);font-size:0.85rem">
-                                {{ record.date }}
-                            </span>
-                        </td>
+                        <!-- ── Session header row ── -->
+                        <tr class="session-row" @click="toggleSession(session.key)"
+                            style="cursor:pointer">
 
-                        <!-- Animal -->
-                        <td>
-                            <div style="display:flex;align-items:center;gap:0.5rem">
-                                <div class="cv-avatar cv-avatar-sm" style="background:linear-gradient(135deg,var(--cv-green-dim),var(--cv-green-bright) 80%);font-size:0.6rem;flex-shrink:0">
-                                    {{ record.animal?.tag?.slice(0, 3) ?? '?' }}
+                            <!-- Expand chevron -->
+                            <td style="padding-inline-start:0.75rem">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                     stroke="currentColor" stroke-width="2.5"
+                                     stroke-linecap="round" stroke-linejoin="round"
+                                     :style="{ transform: isExpanded(session.key) ? 'rotate(90deg)' : 'rotate(0deg)',
+                                               transition: 'transform 200ms ease',
+                                               color: 'var(--cv-amber)' }">
+                                    <polyline points="9 18 15 12 9 6"/>
+                                </svg>
+                            </td>
+
+                            <!-- Date -->
+                            <td>
+                                <span style="font-weight:600;font-size:0.88rem;color:var(--cv-text-primary)">
+                                    {{ session.date }}
+                                </span>
+                            </td>
+
+                            <!-- Lot -->
+                            <td>
+                                <span style="font-size:0.85rem;color:var(--cv-text-secondary)">
+                                    {{ session.lot_name }}
+                                </span>
+                            </td>
+
+                            <!-- Session ref -->
+                            <td>
+                                <span v-if="session.session_ref"
+                                      style="font-size:0.78rem;color:var(--cv-text-muted);font-family:monospace">
+                                    {{ session.session_ref }}
+                                </span>
+                                <span v-else style="color:var(--cv-text-muted)">—</span>
+                            </td>
+
+                            <!-- Animal count badge -->
+                            <td>
+                                <span class="cv-badge cv-badge-info">
+                                    {{ session.animal_count }}
+                                    {{ lang === 'ar' ? 'ماشية' : 'animals' }}
+                                </span>
+                            </td>
+
+                            <!-- Avg weight -->
+                            <td>
+                                <span style="color:var(--cv-blue-text);font-weight:700">
+                                    {{ session.avg_weight != null ? fmt(session.avg_weight) + ' kg' : '—' }}
+                                </span>
+                            </td>
+
+                            <!-- Avg ADG -->
+                            <td>
+                                <span v-if="session.avg_adg != null"
+                                      :class="['cv-badge', adgClass(session.avg_adg)]">
+                                    {{ fmt(session.avg_adg, 3) }} {{ lang === 'ar' ? 'كجم/يوم' : 'kg/d' }}
+                                </span>
+                                <span v-else class="cv-badge cv-badge-neutral">—</span>
+                            </td>
+
+                            <!-- Recorder -->
+                            <td>
+                                <span style="font-size:0.8rem;color:var(--cv-text-muted)">
+                                    {{ session.recorder }}
+                                </span>
+                            </td>
+                        </tr>
+
+                        <!-- ── Expanded animal sub-table ── -->
+                        <tr v-if="isExpanded(session.key)" :key="session.key + '_expanded'">
+                            <td colspan="8" style="padding:0;background:var(--cv-bg-page)">
+                                <div style="padding:0.5rem 1rem 0.75rem 2.5rem">
+                                    <table class="cv-table" style="min-width:600px;background:var(--cv-bg-page)">
+                                        <thead>
+                                            <tr style="font-size:0.75rem">
+                                                <th class="text-start">{{ lang === 'ar' ? 'الماشية' : 'Animal' }}</th>
+                                                <th class="text-start">{{ lang === 'ar' ? 'الوزن (كجم)' : 'Weight (kg)' }}</th>
+                                                <th class="text-start">{{ lang === 'ar' ? 'النمو' : 'Gain' }}</th>
+                                                <th class="text-start">{{ lang === 'ar' ? 'معدل النمو' : 'ADG' }}</th>
+                                                <th class="text-start">{{ lang === 'ar' ? 'الأيام' : 'Days' }}</th>
+                                                <th class="text-start" v-if="canEdit || canDelete">
+                                                    {{ lang === 'ar' ? 'إجراءات' : 'Actions' }}
+                                                </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="animal in session.animals" :key="animal.id">
+
+                                                <!-- Animal -->
+                                                <td>
+                                                    <div style="display:flex;align-items:center;gap:0.45rem">
+                                                        <div class="cv-avatar cv-avatar-sm"
+                                                             :style="{ background: isLocked(animal.animal)
+                                                                ? 'linear-gradient(135deg,rgba(100,100,100,.3),rgba(120,120,120,.5))'
+                                                                : 'linear-gradient(135deg,var(--cv-green-dim),var(--cv-green-bright) 80%)',
+                                                                fontSize: '0.6rem', flexShrink: 0 }">
+                                                            {{ animal.animal?.tag?.slice(0,3) ?? '?' }}
+                                                        </div>
+                                                        <div>
+                                                            <div style="font-weight:600;font-size:0.83rem;color:var(--cv-text-primary)">
+                                                                {{ animal.animal?.tag ?? '—' }}
+                                                            </div>
+                                                            <div style="font-size:0.73rem;color:var(--cv-text-muted)">
+                                                                {{ animal.animal?.breed ?? '' }}
+                                                                <span v-if="isLocked(animal.animal)"
+                                                                      class="cv-badge cv-badge-neutral"
+                                                                      style="font-size:0.65rem;padding:0.1rem 0.4rem;margin-inline-start:4px">
+                                                                    {{ animal.animal?.status === 'sold'
+                                                                        ? (lang === 'ar' ? 'مباع' : 'Sold')
+                                                                        : (lang === 'ar' ? 'مذبوح' : 'Slaughtered') }}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+
+                                                <!-- Weight -->
+                                                <td>
+                                                    <span style="color:var(--cv-blue-text);font-weight:700">
+                                                        {{ fmt(animal.weight_kg) }}
+                                                    </span>
+                                                </td>
+
+                                                <!-- Gain -->
+                                                <td>
+                                                    <span v-if="animal.total_gain_kg != null && animal.total_gain_kg !== 0"
+                                                          style="color:var(--cv-green-bright);font-size:0.85rem">
+                                                        +{{ fmt(animal.total_gain_kg) }} kg
+                                                    </span>
+                                                    <span v-else style="color:var(--cv-text-muted)">—</span>
+                                                </td>
+
+                                                <!-- ADG -->
+                                                <td>
+                                                    <span v-if="animal.adg_kg != null && animal.adg_kg > 0"
+                                                          :class="['cv-badge', adgClass(animal.adg_kg)]">
+                                                        {{ fmt(animal.adg_kg, 3) }} {{ lang === 'ar' ? 'كجم/يوم' : 'kg/d' }}
+                                                    </span>
+                                                    <span v-else class="cv-badge cv-badge-neutral">—</span>
+                                                </td>
+
+                                                <!-- Days -->
+                                                <td>
+                                                    <span v-if="animal.days_on_feed != null"
+                                                          style="color:var(--cv-text-secondary);font-size:0.83rem">
+                                                        {{ animal.days_on_feed }} {{ lang === 'ar' ? 'يوم' : 'd' }}
+                                                    </span>
+                                                    <span v-else style="color:var(--cv-text-muted)">—</span>
+                                                </td>
+
+                                                <!-- Actions — hidden for sold/slaughtered -->
+                                                <td v-if="canEdit || canDelete">
+                                                    <div v-if="!isLocked(animal.animal)"
+                                                         style="display:flex;gap:0.3rem">
+                                                        <button v-if="canEdit"
+                                                                class="cv-action-btn cv-action-btn-blue"
+                                                                :title="lang === 'ar' ? 'تعديل' : 'Edit'"
+                                                                @click.stop="openEdit(animal)">
+                                                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                                                                 stroke="currentColor" stroke-width="1.7"
+                                                                 stroke-linecap="round" stroke-linejoin="round">
+                                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                                            </svg>
+                                                        </button>
+                                                        <button v-if="canDelete"
+                                                                class="cv-action-btn cv-action-btn-danger"
+                                                                :title="lang === 'ar' ? 'حذف' : 'Delete'"
+                                                                @click.stop="confirmDelete(animal)">
+                                                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                                                                 stroke="currentColor" stroke-width="1.7"
+                                                                 stroke-linecap="round" stroke-linejoin="round">
+                                                                <polyline points="3 6 5 6 21 6"/>
+                                                                <path d="M19 6l-1 14H6L5 6"/>
+                                                                <path d="M10 11v6"/><path d="M14 11v6"/>
+                                                                <path d="M9 6V4h6v2"/>
+                                                            </svg>
+                                                        </button>
+                                                    </div>
+                                                    <span v-else style="font-size:0.75rem;color:var(--cv-text-muted)">
+                                                        {{ lang === 'ar' ? 'مقفل' : 'Locked' }}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
                                 </div>
-                                <div>
-                                    <div style="font-weight:600;font-size:0.85rem;color:var(--cv-text-primary)">
-                                        {{ record.animal?.tag ?? '—' }}
-                                    </div>
-                                    <div style="font-size:0.75rem;color:var(--cv-text-muted)">
-                                        {{ record.animal?.breed ?? '' }}
-                                        <span v-if="record.animal?.sex" style="margin-inline-start:4px">
-                                            · {{ record.animal.sex === 'male'
-                                                ? (lang === 'ar' ? 'ذكر' : 'M')
-                                                : (lang === 'ar' ? 'أنثى' : 'F') }}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        </td>
+                            </td>
+                        </tr>
 
-                        <!-- Lot -->
-                        <td>
-                            <span style="font-size:0.83rem;color:var(--cv-text-secondary)">
-                                {{ record.lot?.name ?? '—' }}
-                            </span>
-                        </td>
-
-                        <!-- Weight -->
-                        <td>
-                            <span style="color:var(--cv-blue-text);font-weight:700;font-size:0.95rem">
-                                {{ fmt(record.weight_kg) }}
-                            </span>
-                        </td>
-
-                        <!-- ADG -->
-                        <td>
-                            <span v-if="record.adg_kg != null" :class="['cv-badge', adgClass(record.adg_kg)]">
-                                {{ fmt(record.adg_kg, 3) }} {{ lang === 'ar' ? 'كجم/يوم' : 'kg/d' }}
-                            </span>
-                            <span v-else class="cv-badge cv-badge-neutral">—</span>
-                        </td>
-
-                        <!-- Total gain -->
-                        <td>
-                            <span v-if="record.total_gain_kg != null"
-                                  style="color:var(--cv-blue-text);font-size:0.85rem">
-                                +{{ fmt(record.total_gain_kg) }} {{ lang === 'ar' ? 'كجم' : 'kg' }}
-                            </span>
-                            <span v-else style="color:var(--cv-text-muted)">—</span>
-                        </td>
-
-                        <!-- Days on feed -->
-                        <td>
-                            <span v-if="record.days_on_feed != null"
-                                  style="color:var(--cv-text-secondary);font-size:0.85rem">
-                                {{ record.days_on_feed }}
-                                {{ lang === 'ar' ? 'يوم' : 'd' }}
-                            </span>
-                            <span v-else style="color:var(--cv-text-muted)">—</span>
-                        </td>
-
-                        <!-- Recorder -->
-                        <td>
-                            <span style="font-size:0.8rem;color:var(--cv-text-muted)">
-                                {{ record.recorder ?? '—' }}
-                            </span>
-                        </td>
-
-                        <!-- Actions -->
-                        <td>
-                            <div style="display:flex;gap:0.35rem">
-                                <button v-if="canEdit"
-                                        class="cv-action-btn cv-action-btn-blue"
-                                        :title="lang === 'ar' ? 'تعديل' : 'Edit'"
-                                        @click="openEdit(record)">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                                         stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                                    </svg>
-                                </button>
-                                <button v-if="canDelete"
-                                        class="cv-action-btn cv-action-btn-danger"
-                                        :title="lang === 'ar' ? 'حذف' : 'Delete'"
-                                        @click="confirmDelete(record)">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                                         stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                                        <polyline points="3 6 5 6 21 6"/>
-                                        <path d="M19 6l-1 14H6L5 6"/>
-                                        <path d="M10 11v6"/><path d="M14 11v6"/>
-                                        <path d="M9 6V4h6v2"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
+                    </template>
                 </tbody>
             </table>
-        </div>
-    </div>
-        <!-- Pagination -->
-        <div v-if="records.links?.length > 3"
-             style="display:flex;justify-content:center;gap:0.35rem;padding:1rem;flex-wrap:wrap">
-            <button v-for="link in records.links" :key="link.label"
-                    :disabled="!link.url || link.active"
-                    :class="['cv-btn', link.active ? 'cv-btn-amber' : 'cv-btn-ghost']"
-                    style="min-width:2.25rem;padding:0.3rem 0.6rem;font-size:0.8rem"
-                    v-html="link.label"
-                    @click="goToPage(link.url)" />
         </div>
     </div>
 
@@ -590,10 +630,7 @@ function fmt(val, decimals = 2) {
     ══════════════════════════════════════════════════════════ -->
     <Transition name="cv-panel">
         <div v-if="panelA" class="cv-modal-backdrop" @click.self="panelA = false">
-            <aside class="cv-slide-panel" :dir="isRtl ? 'rtl' : 'ltr'"
-                   style="width:min(480px,100vw)">
-
-                <!-- Header -->
+            <aside class="cv-slide-panel" :dir="isRtl ? 'rtl' : 'ltr'" style="width:min(480px,100vw)">
                 <div class="cv-modal-header">
                     <div>
                         <div style="font-size:0.7rem;color:var(--cv-amber);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">
@@ -603,18 +640,15 @@ function fmt(val, decimals = 2) {
                             {{ lang === 'ar' ? 'تسجيل وزن ماشية' : 'Record Single Weight' }}
                         </h2>
                     </div>
-                    <button class="cv-action-btn" @click="panelA = false" :title="lang === 'ar' ? 'إغلاق' : 'Close'">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <button class="cv-action-btn" @click="panelA = false">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                         </svg>
                     </button>
                 </div>
 
-                <!-- Body -->
                 <div class="cv-modal-body" style="display:flex;flex-direction:column;gap:1rem;overflow-y:auto">
-
-                    <!-- Section 1 — Location -->
+                    <!-- Section 1 — Location & Animal -->
                     <div class="cv-card">
                         <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:1rem">
                             <div class="cv-section-badge">1</div>
@@ -622,27 +656,19 @@ function fmt(val, decimals = 2) {
                                 {{ lang === 'ar' ? 'الموقع والماشية' : 'Location & Animal' }}
                             </span>
                         </div>
-
-                        <!-- Lot -->
                         <div class="cv-field">
-                            <label class="cv-label">
-                                {{ lang === 'ar' ? 'القطيع *' : 'Lot *' }}
-                            </label>
+                            <label class="cv-label">{{ lang === 'ar' ? 'القطيع *' : 'Lot *' }}</label>
                             <select v-model="formA.lot_id" class="cv-select"
                                     :class="{ 'cv-input-error': formA.errors.lot_id }">
                                 <option value="">{{ lang === 'ar' ? '— اختر القطيع —' : '— Select lot —' }}</option>
-                                <option v-for="lot in panelALots" :key="lot.id" :value="lot.id">
+                                <option v-for="lot in lots" :key="lot.id" :value="lot.id">
                                     {{ lot.name }} — {{ n(lot.farm, 'name') }}
                                 </option>
                             </select>
                             <div v-if="formA.errors.lot_id" class="cv-field-error">{{ formA.errors.lot_id }}</div>
                         </div>
-
-                        <!-- Animal -->
                         <div class="cv-field">
-                            <label class="cv-label">
-                                {{ lang === 'ar' ? 'الماشية *' : 'Animal *' }}
-                            </label>
+                            <label class="cv-label">{{ lang === 'ar' ? 'الماشية *' : 'Animal *' }}</label>
                             <select v-model="formA.animal_id" class="cv-select"
                                     :disabled="!formA.lot_id || !panelAAnimals.length"
                                     :class="{ 'cv-input-error': formA.errors.animal_id }">
@@ -655,7 +681,7 @@ function fmt(val, decimals = 2) {
                         </div>
                     </div>
 
-                    <!-- Section 2 — Weight data -->
+                    <!-- Section 2 — Weight Data -->
                     <div class="cv-card">
                         <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:1rem">
                             <div class="cv-section-badge">2</div>
@@ -663,17 +689,13 @@ function fmt(val, decimals = 2) {
                                 {{ lang === 'ar' ? 'بيانات الوزن' : 'Weight Data' }}
                             </span>
                         </div>
-
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
-                            <!-- Date -->
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'التاريخ *' : 'Date *' }}</label>
                                 <input v-model="formA.date" class="cv-input" type="date"
                                        :class="{ 'cv-input-error': formA.errors.date }" />
                                 <div v-if="formA.errors.date" class="cv-field-error">{{ formA.errors.date }}</div>
                             </div>
-
-                            <!-- Weight -->
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'الوزن (كجم) *' : 'Weight (kg) *' }}</label>
                                 <input v-model="formA.weight_kg" class="cv-input" type="number"
@@ -683,19 +705,15 @@ function fmt(val, decimals = 2) {
                                 <div v-if="formA.errors.weight_kg" class="cv-field-error">{{ formA.errors.weight_kg }}</div>
                             </div>
                         </div>
-
-                        <!-- Scale reference -->
                         <div class="cv-field">
                             <label class="cv-label">{{ lang === 'ar' ? 'مرجع الميزان' : 'Scale Reference' }}</label>
                             <input v-model="formA.scale_reference" class="cv-input" type="text"
-                                   :placeholder="lang === 'ar' ? 'رقم الجهاز أو الموقع...' : 'Scale ID or location…'" />
+                                   :placeholder="lang === 'ar' ? 'رقم الجهاز...' : 'Scale ID…'" />
                         </div>
-
-                        <!-- Session ref -->
                         <div class="cv-field">
-                            <label class="cv-label">{{ lang === 'ar' ? 'رقم جلسة الوزن' : 'Session Ref' }}</label>
+                            <label class="cv-label">{{ lang === 'ar' ? 'رقم الجلسة' : 'Session Ref' }}</label>
                             <input v-model="formA.session_ref" class="cv-input" type="text"
-                                   :placeholder="lang === 'ar' ? 'معرّف الجلسة (اختياري)...' : 'Session identifier (optional)…'" />
+                                   :placeholder="lang === 'ar' ? 'معرّف الجلسة...' : 'Session ID…'" />
                         </div>
                     </div>
 
@@ -714,15 +732,13 @@ function fmt(val, decimals = 2) {
                     </div>
                 </div>
 
-                <!-- Footer -->
                 <div class="cv-modal-footer">
                     <button class="cv-btn cv-btn-ghost" @click="panelA = false">
                         {{ lang === 'ar' ? 'إلغاء' : 'Cancel' }}
                     </button>
                     <button class="cv-btn cv-btn-amber" :disabled="formA.processing" @click="submitA">
                         <svg v-if="formA.processing" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                             style="animation:spin 1s linear infinite">
+                             stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite">
                             <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
                         </svg>
                         {{ lang === 'ar' ? 'حفظ السجل' : 'Save Record' }}
@@ -737,10 +753,7 @@ function fmt(val, decimals = 2) {
     ══════════════════════════════════════════════════════════ -->
     <Transition name="cv-panel">
         <div v-if="panelB" class="cv-modal-backdrop" @click.self="panelB = false">
-            <aside class="cv-slide-panel" :dir="isRtl ? 'rtl' : 'ltr'"
-                   style="width:min(700px,100vw)">
-
-                <!-- Header -->
+            <aside class="cv-slide-panel" :dir="isRtl ? 'rtl' : 'ltr'" style="width:min(700px,100vw)">
                 <div class="cv-modal-header">
                     <div>
                         <div style="font-size:0.7rem;color:var(--cv-amber);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">
@@ -750,18 +763,15 @@ function fmt(val, decimals = 2) {
                             {{ lang === 'ar' ? 'تسجيل دفعي للقطيع' : 'Batch Lot Weighing' }}
                         </h2>
                     </div>
-                    <button class="cv-action-btn" @click="panelB = false" :title="lang === 'ar' ? 'إغلاق' : 'Close'">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <button class="cv-action-btn" @click="panelB = false">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                         </svg>
                     </button>
                 </div>
 
-                <!-- Body -->
                 <div class="cv-modal-body" style="display:flex;flex-direction:column;gap:1rem;overflow-y:auto">
-
-                    <!-- Section 1 — Session header -->
+                    <!-- Section 1 — Session Details -->
                     <div class="cv-card">
                         <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:1rem">
                             <div class="cv-section-badge">1</div>
@@ -769,9 +779,7 @@ function fmt(val, decimals = 2) {
                                 {{ lang === 'ar' ? 'بيانات الجلسة' : 'Session Details' }}
                             </span>
                         </div>
-
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
-                            <!-- Lot -->
                             <div class="cv-field" style="grid-column:1/-1">
                                 <label class="cv-label">{{ lang === 'ar' ? 'القطيع *' : 'Lot *' }}</label>
                                 <select v-model="batchLotId" class="cv-select">
@@ -781,21 +789,15 @@ function fmt(val, decimals = 2) {
                                     </option>
                                 </select>
                             </div>
-
-                            <!-- Date -->
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'تاريخ الوزن *' : 'Weigh Date *' }}</label>
                                 <input v-model="batchDate" class="cv-input" type="date" />
                             </div>
-
-                            <!-- Scale ref -->
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'مرجع الميزان' : 'Scale Reference' }}</label>
                                 <input v-model="batchScale" class="cv-input" type="text"
                                        :placeholder="lang === 'ar' ? 'رقم الجهاز...' : 'Scale ID…'" />
                             </div>
-
-                            <!-- Session ref -->
                             <div class="cv-field" style="grid-column:1/-1">
                                 <label class="cv-label">{{ lang === 'ar' ? 'رقم الجلسة' : 'Session Ref' }}</label>
                                 <input v-model="batchSession" class="cv-input" type="text"
@@ -804,7 +806,7 @@ function fmt(val, decimals = 2) {
                         </div>
                     </div>
 
-                    <!-- Section 2 — Animals table -->
+                    <!-- Section 2 — Animal Weights -->
                     <div class="cv-card">
                         <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:1rem">
                             <div class="cv-section-badge">2</div>
@@ -812,47 +814,31 @@ function fmt(val, decimals = 2) {
                                 {{ lang === 'ar' ? 'أوزان الماشيةات' : 'Animal Weights' }}
                             </span>
                             <span v-if="batchReadings.length" class="cv-badge cv-badge-info" style="margin-inline-start:auto">
-                                {{ batchReadings.length }}
-                                {{ lang === 'ar' ? 'ماشية' : 'animals' }}
+                                {{ batchReadings.length }} {{ lang === 'ar' ? 'ماشية' : 'animals' }}
                             </span>
                         </div>
 
-                        <!-- Placeholder if no lot selected -->
                         <div v-if="!batchLotId"
                              style="padding:1.5rem;text-align:center;color:var(--cv-text-muted);font-size:0.85rem">
                             {{ lang === 'ar' ? 'اختر القطيع أولاً لعرض الماشيةات' : 'Select a lot above to load animals' }}
                         </div>
-
-                        <!-- Loading -->
-                        <div v-else-if="batchLotId && !batchReadings.length && batchAnimals.length === 0"
+                        <div v-else-if="batchLotId && !batchReadings.length"
                              style="padding:1.5rem;text-align:center;color:var(--cv-text-muted);font-size:0.85rem">
                             {{ lang === 'ar' ? 'لا توجد ماشيةات نشطة في هذا القطيع' : 'No active animals in this lot' }}
                         </div>
-
-                        <!-- Readings table -->
                         <div v-else style="overflow-x:auto">
                             <table class="cv-table">
                                 <thead>
                                     <tr>
                                         <th class="text-start">{{ lang === 'ar' ? 'الرقم' : 'Tag' }}</th>
                                         <th class="text-start">{{ lang === 'ar' ? 'السلالة' : 'Breed' }}</th>
-                                        <th class="text-start" style="width:160px">
-                                            {{ lang === 'ar' ? 'الوزن (كجم)' : 'Weight (kg)' }}
-                                        </th>
+                                        <th class="text-start" style="width:160px">{{ lang === 'ar' ? 'الوزن (كجم)' : 'Weight (kg)' }}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr v-for="row in batchReadings" :key="row.animal_id">
-                                        <td>
-                                            <span style="font-weight:600;font-size:0.85rem;color:var(--cv-text-primary)">
-                                                {{ row.tag }}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span style="font-size:0.8rem;color:var(--cv-text-muted)">
-                                                {{ row.breed || '—' }}
-                                            </span>
-                                        </td>
+                                        <td><span style="font-weight:600;font-size:0.85rem">{{ row.tag }}</span></td>
+                                        <td><span style="font-size:0.8rem;color:var(--cv-text-muted)">{{ row.breed || '—' }}</span></td>
                                         <td>
                                             <input v-model="row.weight_kg" class="cv-input" type="number"
                                                    min="0" max="2000" step="0.1"
@@ -863,9 +849,7 @@ function fmt(val, decimals = 2) {
                                 </tbody>
                             </table>
                         </div>
-
-                        <div v-if="batchErrors.readings"
-                             class="cv-field-error" style="margin-top:0.5rem">
+                        <div v-if="batchErrors.readings" class="cv-field-error" style="margin-top:0.5rem">
                             {{ batchErrors.readings }}
                         </div>
                     </div>
@@ -880,12 +864,11 @@ function fmt(val, decimals = 2) {
                         </div>
                         <div class="cv-field">
                             <textarea v-model="batchNotes" class="cv-textarea" rows="2"
-                                      :placeholder="lang === 'ar' ? 'ملاحظات عامة على جلسة الوزن...' : 'General session notes…'" />
+                                      :placeholder="lang === 'ar' ? 'ملاحظات عامة...' : 'General session notes…'" />
                         </div>
                     </div>
                 </div>
 
-                <!-- Footer -->
                 <div class="cv-modal-footer">
                     <button class="cv-btn cv-btn-ghost" @click="panelB = false">
                         {{ lang === 'ar' ? 'إلغاء' : 'Cancel' }}
@@ -894,8 +877,7 @@ function fmt(val, decimals = 2) {
                             :disabled="batchLoading || !batchLotId || !batchDate"
                             @click="submitBatch">
                         <svg v-if="batchLoading" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                             style="animation:spin 1s linear infinite">
+                             stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite">
                             <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
                         </svg>
                         {{ lang === 'ar' ? 'حفظ الجلسة' : 'Save Session' }}
@@ -910,10 +892,7 @@ function fmt(val, decimals = 2) {
     ══════════════════════════════════════════════════════════ -->
     <Transition name="cv-panel">
         <div v-if="panelC" class="cv-modal-backdrop" @click.self="panelC = false">
-            <aside class="cv-slide-panel" :dir="isRtl ? 'rtl' : 'ltr'"
-                   style="width:min(440px,100vw)">
-
-                <!-- Header -->
+            <aside class="cv-slide-panel" :dir="isRtl ? 'rtl' : 'ltr'" style="width:min(440px,100vw)">
                 <div class="cv-modal-header">
                     <div>
                         <div style="font-size:0.7rem;color:var(--cv-amber);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">
@@ -926,27 +905,22 @@ function fmt(val, decimals = 2) {
                             </span>
                         </h2>
                     </div>
-                    <button class="cv-action-btn" @click="panelC = false" :title="lang === 'ar' ? 'إغلاق' : 'Close'">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <button class="cv-action-btn" @click="panelC = false">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                         </svg>
                     </button>
                 </div>
 
-                <!-- Body -->
                 <div class="cv-modal-body" style="display:flex;flex-direction:column;gap:1rem;overflow-y:auto">
                     <div class="cv-card">
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
-                            <!-- Date -->
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'التاريخ *' : 'Date *' }}</label>
                                 <input v-model="formC.date" class="cv-input" type="date"
                                        :class="{ 'cv-input-error': formC.errors.date }" />
                                 <div v-if="formC.errors.date" class="cv-field-error">{{ formC.errors.date }}</div>
                             </div>
-
-                            <!-- Weight -->
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'الوزن (كجم) *' : 'Weight (kg) *' }}</label>
                                 <input v-model="formC.weight_kg" class="cv-input" type="number"
@@ -954,22 +928,17 @@ function fmt(val, decimals = 2) {
                                        :class="{ 'cv-input-error': formC.errors.weight_kg }" />
                                 <div v-if="formC.errors.weight_kg" class="cv-field-error">{{ formC.errors.weight_kg }}</div>
                             </div>
-
-                            <!-- Scale ref -->
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'مرجع الميزان' : 'Scale Ref' }}</label>
                                 <input v-model="formC.scale_reference" class="cv-input" type="text"
                                        :placeholder="lang === 'ar' ? 'رقم الجهاز...' : 'Scale ID…'" />
                             </div>
-
-                            <!-- Session ref -->
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'رقم الجلسة' : 'Session Ref' }}</label>
                                 <input v-model="formC.session_ref" class="cv-input" type="text"
                                        :placeholder="lang === 'ar' ? 'معرّف الجلسة...' : 'Session ID…'" />
                             </div>
                         </div>
-
                         <div class="cv-field">
                             <label class="cv-label">{{ lang === 'ar' ? 'ملاحظات' : 'Notes' }}</label>
                             <textarea v-model="formC.notes" class="cv-textarea" rows="3"
@@ -978,7 +947,6 @@ function fmt(val, decimals = 2) {
                     </div>
                 </div>
 
-                <!-- Footer -->
                 <div class="cv-modal-footer">
                     <button class="cv-btn cv-btn-ghost" @click="panelC = false">
                         {{ lang === 'ar' ? 'إلغاء' : 'Cancel' }}
@@ -1040,14 +1008,12 @@ function fmt(val, decimals = 2) {
                 </div>
             </div>
         </div>
-         </Transition>
+    </Transition>
 
-   
+    </div>
 </template>
 
 <style scoped>
-/* ── Slide panel ─────────────────────────────────────────────── */
-/* Only genuinely new elements not in app.css go here */
 .cv-slide-panel {
     position: fixed;
     inset-block: 0;
@@ -1061,53 +1027,27 @@ function fmt(val, decimals = 2) {
     overflow: hidden;
 }
 
-/* ── Panel transition ──────────────────────────────────────── */
-.cv-panel-enter-active,
-.cv-panel-leave-active {
-    transition: opacity 200ms ease;
+/* Session row hover */
+.session-row:hover td {
+    background: rgba(255,255,255,0.03);
 }
+
+.cv-panel-enter-active, .cv-panel-leave-active { transition: opacity 200ms ease; }
 .cv-panel-enter-active .cv-slide-panel,
-.cv-panel-leave-active .cv-slide-panel {
-    transition: transform 250ms cubic-bezier(.4,0,.2,1);
-}
-.cv-panel-enter-from,
-.cv-panel-leave-to {
-    opacity: 0;
-}
-.cv-panel-enter-from .cv-slide-panel {
-    transform: translateX(100%);
-}
-.cv-panel-leave-to .cv-slide-panel {
-    transform: translateX(100%);
-}
+.cv-panel-leave-active .cv-slide-panel { transition: transform 250ms cubic-bezier(.4,0,.2,1); }
+.cv-panel-enter-from, .cv-panel-leave-to { opacity: 0; }
+.cv-panel-enter-from .cv-slide-panel,
+.cv-panel-leave-to .cv-slide-panel { transform: translateX(100%); }
 
-/* ── Section badge ───────────────────────────────────────── */
 .cv-section-badge {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--cv-amber-dim, rgba(245,158,11,.2)), var(--cv-amber));
-    color: #000;
-    font-size: 0.72rem;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: linear-gradient(135deg, rgba(245,158,11,.2), var(--cv-amber));
+    color: #000; font-size: 0.72rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
 
-/* ── Spin animation for loading ──────────────────────────── */
-@keyframes spin {
-    to { transform: rotate(360deg); }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Modal fade transition ───────────────────────────────── */
-.cv-modal-fade-enter-active,
-.cv-modal-fade-leave-active {
-    transition: opacity 200ms ease;
-}
-.cv-modal-fade-enter-from,
-.cv-modal-fade-leave-to {
-    opacity: 0;
-}
+.cv-modal-fade-enter-active, .cv-modal-fade-leave-active { transition: opacity 200ms ease; }
+.cv-modal-fade-enter-from, .cv-modal-fade-leave-to { opacity: 0; }
 </style>

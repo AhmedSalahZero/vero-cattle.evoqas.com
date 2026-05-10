@@ -89,9 +89,13 @@ class SlaughterController extends Controller
             );
         }
 
+        // §6.5 Super Admin company_id resolution — derive from the animal record.
+        // findOrFail() guarantees a non-null result; animal always belongs to a company.
         $companyId = $authUser->is_super_admin
-            ? Animal::find($validated['animal_id'])->company_id
-            : $authUser->company_id;
+            ? (int) Animal::findOrFail($validated['animal_id'])->company_id
+            : (int) $authUser->company_id;
+
+        abort_unless($companyId > 0, 422, 'Company could not be resolved.');
 
         DB::transaction(function () use ($validated, $companyId) {
             $record = SlaughterRecord::create([...$validated, 'company_id' => $companyId]);

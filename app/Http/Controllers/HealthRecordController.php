@@ -112,9 +112,12 @@ class HealthRecordController extends Controller
         $validated = $this->validateRecord($request);
         $this->authorizeAnimal($authUser, $validated['animal_id']);
 
+        // §6.5 Super Admin company_id resolution — derive from the animal record.
         $companyId = $authUser->is_super_admin
-            ? Animal::find($validated['animal_id'])->company_id
-            : $authUser->company_id;
+            ? (int) Animal::findOrFail($validated['animal_id'])->company_id
+            : (int) $authUser->company_id;
+
+        abort_unless($companyId > 0, 422, 'Company could not be resolved.');
 
         // 📌 METHODOLOGY REFERENCE: HealthRecordMedicineDecrement
         // All stock logic lives in the service — controller stays thin

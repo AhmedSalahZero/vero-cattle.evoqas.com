@@ -115,9 +115,7 @@ class SalesController extends Controller
         // ── SALE-JE-1: Pass revenue accounts to Vue for confirm modal ──
         // All active posting accounts of type 'revenue' for this company.
         // Super Admin sees accounts for their resolved company.
-        $companyId = $authUser->is_super_admin
-            ? (int) ($request->input('company_id') ?: Company::value('id'))
-            : $authUser->company_id;
+        $companyId = $this->resolveCompanyId($request);
 
         $revenueAccounts = $this->availableRevenueAccounts($companyId);
 
@@ -173,9 +171,7 @@ class SalesController extends Controller
             'lines.*.notes'          => 'nullable|string|max:500',
         ]);
 
-        $companyId = $authUser->is_super_admin
-            ? Farm::find($validated['farm_id'])->company_id
-            : $authUser->company_id;
+        $companyId = $this->resolveCompanyId($request);
 
         // 📌 METHODOLOGY REFERENCE: SaleInvoiceAutoRef (#27)
         $invoiceRef = !empty($validated['invoice_ref'])

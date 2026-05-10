@@ -22,6 +22,14 @@ use Illuminate\Support\Facades\DB;
 //
 //  All amounts in company currency (EGP by default).
 //  Only status = 'posted' journal entries are included.
+//
+//  FIX (Session 65c — BalanceSheet parent rollup):
+//    Group/header accounts (allow_direct_posting = false) now receive
+//    a rolled-up balance = Σ of all descendant leaf balances.
+//    Previously only posting accounts were included, so all parent
+//    rows showed 0.00 in the Vue tree even when children had balances.
+//    Section totals are now computed from top-level accounts only
+//    (parent_id = null) to prevent double-counting.
 // ══════════════════════════════════════════════════════════════════
 
 class FinancialReportService
@@ -259,93 +267,271 @@ class FinancialReportService
     // Assets = Liabilities + Equity
     // All balances as at $asOfDate (cumulative from the beginning)
     // Retained earnings = equity account balance + YTD net income
+    //
+    // FIX (Session 65c — v2): Rollup uses CODE-PREFIX matching, not
+    // parent_id FK chain. User-created sub-accounts (e.g. 1110001)
+    // may have parent_id = null or point incorrectly, so parent_id
+    // cannot be trusted for tree traversal. Instead, a group header
+    // account with code "1110" accumulates the balance of every
+    // posting account whose code starts with "1110" — regardless of
+    // what parent_id says in the database.
+    //
+    // Section totals are computed by summing the balances of the
+    // top-level system group headers (shortest codes per type prefix)
+    // to avoid double-counting.
     // ──────────────────────────────────────────────────────────────
     public function balanceSheet(
         int    $companyId,
         string $asOfDate,
         ?int   $fiscalYearId = null
     ): array {
-        // All posted lines up to and including asOfDate
-        $balances = DB::table('journal_lines as jl')
+        // Step 1 — Pull journal totals for all posting accounts up to asOfDate.
+        // Only allow_direct_posting = true accounts ever have journal lines.
+        // 📌 BcmathMonetaryPrecision — SUM() returns strings via PDO, keep as strings.
+        $ledger = DB::table('journal_lines as jl')
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->join('accounts as a', 'a.id', '=', 'jl.account_id')
             ->where('je.company_id', $companyId)
             ->where('je.status', 'posted')
             ->whereDate('je.date', '<=', $asOfDate)
             ->whereIn('a.type', ['asset', 'liability', 'equity'])
-            ->groupBy('jl.account_id', 'a.code', 'a.name_en', 'a.name_ar', 'a.type', 'a.normal_balance')
+            ->groupBy('jl.account_id', 'a.normal_balance')
             ->select(
                 'jl.account_id',
-                'a.code',
-                'a.name_en',
-                'a.name_ar',
-                'a.type',
                 'a.normal_balance',
                 DB::raw('SUM(jl.debit)  as total_debit'),
                 DB::raw('SUM(jl.credit) as total_credit')
             )
-            ->get();
+            ->get()
+            ->keyBy('account_id');
+
+        // Step 2 — Fetch ALL accounts for this company (posting + group headers).
+        // Order by code length DESC then code ASC so children always appear
+        // before parents when we iterate — ensures we accumulate leaf values
+        // into intermediate nodes before intermediate nodes roll up further.
+        $allAccounts = Account::where('company_id', $companyId)
+            ->where('is_active', true)
+            ->whereIn('type', ['asset', 'liability', 'equity'])
+            ->orderByRaw('LENGTH(code) DESC')
+            ->orderBy('code')
+            ->get(['id', 'parent_id', 'code', 'name_en', 'name_ar', 'type', 'normal_balance', 'allow_direct_posting']);
+
+        // Step 3 — Compute the signed leaf balance for every posting account.
+        // Group headers start at '0' — their balance will be filled by the rollup.
+        // 📌 BcmathMonetaryPrecision — store as bcmath strings at scale=4.
+        $balanceMap = [];  // account_id => bcmath string
+
+        foreach ($allAccounts as $acc) {
+            $row    = $ledger->get($acc->id);
+            $totalD = (string)($row->total_debit  ?? '0');
+            $totalC = (string)($row->total_credit ?? '0');
+
+            // Debit-normal (asset): balance = debit − credit
+            // Credit-normal (liability, equity): balance = credit − debit
+            $balanceMap[$acc->id] = ($acc->normal_balance === 'debit')
+                ? bcsub($totalD, $totalC, 4)
+                : bcsub($totalC, $totalD, 4);
+        }
+
+        // Step 4 — Code-prefix rollup.
+        //
+        // For every posting account (leaf), find all group header accounts
+        // in the same type whose code is a strict prefix of the leaf's code.
+        // Add the leaf's balance into each matching ancestor.
+        //
+        // Example: leaf code "1110001" matches headers "1110", "1100", "1000"
+        // (if those exist), and each gets the leaf balance added.
+        //
+        // This approach is immune to missing or incorrect parent_id FK values,
+        // which is the root cause of the previous fix not working.
+        //
+        // We iterate accounts ordered by code length DESC (longest first),
+        // so leaves are processed before intermediate nodes. This means an
+        // intermediate node's own balance (from its own journal entries, if any)
+        // is already set when it becomes an "ancestor" for even-shorter codes.
+
+        // Separate posting leaves from group headers for clarity
+        $postingAccounts = $allAccounts->where('allow_direct_posting', true);
+        $groupHeaders    = $allAccounts->where('allow_direct_posting', false);
+
+        foreach ($postingAccounts as $leaf) {
+            $leafCode    = $leaf->code;
+            $leafBalance = $balanceMap[$leaf->id] ?? '0';
+
+            // Skip leaves with zero balance — nothing to roll up
+            if (bccomp($leafBalance, '0', 4) === 0) {
+                continue;
+            }
+
+            foreach ($groupHeaders as $header) {
+                // A header is an ancestor of this leaf if the leaf code
+                // starts with the header's code AND the codes are different.
+                if (
+                    $header->type === $leaf->type &&
+                    $header->code !== $leafCode &&
+                    str_starts_with($leafCode, $header->code)
+                ) {
+                    $balanceMap[$header->id] = bcadd(
+                        $balanceMap[$header->id] ?? '0',
+                        $leafBalance,
+                        4
+                    );
+                }
+            }
+        }
+
+        // Step 5 — Build output arrays in TREE ORDER.
+        //
+        // Goal: each group header is immediately followed by its children,
+        // recursively — 1100 → 1110 → 1110001 → 1130 → 1130002 → 1200 → …
+        //
+        // Algorithm: pure code-prefix tree ordering (same basis as Step 4 rollup).
+        // No parent_id dependency — codes are always reliable.
+        //
+        // For each account type:
+        //   1. Filter accounts to this type.
+        //   2. Find root accounts = those with no shorter-code ancestor in the set.
+        //   3. Recursively emit: node first, then direct children in code order,
+        //      then their children, etc. "Direct child" = descendant with no
+        //      intermediate node between it and the current node.
+        //   4. Attach depth (0=root group, 1=sub-group, 2=leaf) for Vue indentation.
+
+        $sorted = $allAccounts->sortBy('code')->values();
+
+        // $emitSubtree: emit $node then all its descendants from $pool, depth-first.
+        // $pool = the filtered collection for this account type (passed down).
+        $emitSubtree = function ($node, int $depth, $pool) use (
+            &$emitSubtree, $balanceMap
+        ): array {
+            $out     = [];
+            $balance = (float) bcadd($balanceMap[$node->id] ?? '0', '0', 2);
+
+            // Always emit group headers; skip zero-balance posting leaves.
+            if (!$node->allow_direct_posting || $balance != 0.0) {
+                $out[] = [
+                    'account_id'           => $node->id,
+                    'parent_id'            => $node->parent_id,
+                    'code'                 => $node->code,
+                    'name_en'              => $node->name_en,
+                    'name_ar'              => $node->name_ar,
+                    'balance'              => $balance,
+                    'allow_direct_posting' => (bool) $node->allow_direct_posting,
+                    'depth'                => $depth,
+                ];
+            }
+
+            $nodeCode    = $node->code;
+            $nodeCodeLen = strlen($nodeCode);
+
+            // All descendants: code starts with $nodeCode and is longer.
+            $descendants = $pool->filter(fn($a) =>
+                strlen($a->code) > $nodeCodeLen &&
+                str_starts_with($a->code, $nodeCode)
+            )->sortBy('code')->values();
+
+            if ($descendants->isEmpty()) {
+                return $out;
+            }
+
+            // Direct children of $node = descendants that have no intermediate
+            // ancestor in $descendants between themselves and $node.
+            // i.e. no other descendant's code is a strict prefix of this account's code.
+            foreach ($descendants as $desc) {
+                $isDirectChild = true;
+                foreach ($descendants as $other) {
+                    if ($other->id === $desc->id)                    continue;
+                    if (strlen($other->code) >= strlen($desc->code)) continue;
+                    if (str_starts_with($desc->code, $other->code)) {
+                        $isDirectChild = false;
+                        break;
+                    }
+                }
+                if ($isDirectChild) {
+                    $out = array_merge($out, $emitSubtree($desc, $depth + 1, $descendants));
+                }
+            }
+
+            return $out;
+        };
 
         $assets      = [];
         $liabilities = [];
         $equity      = [];
 
-        foreach ($balances as $row) {
-            // Asset (debit-normal): balance = debit − credit
-            // Liability/Equity (credit-normal): balance = credit − debit
-            // 📌 BcmathMonetaryPrecision — MySQL SUM() strings, use bcsub
-            $totalD = (string)($row->total_debit  ?? '0');
-            $totalC = (string)($row->total_credit ?? '0');
-            $balance = (float) bcadd(
-                ($row->normal_balance === 'debit')
-                    ? bcsub($totalD, $totalC, 4)
-                    : bcsub($totalC, $totalD, 4),
-                '0', 2
-            );
+        foreach (['asset', 'liability', 'equity'] as $type) {
+            $typeAccounts = $sorted->filter(fn($a) => $a->type === $type)->values();
 
-            $entry = [
-                'account_id' => $row->account_id,
-                'code'       => $row->code,
-                'name_en'    => $row->name_en,
-                'name_ar'    => $row->name_ar,
-                'balance'    => $balance,
-            ];
+            // Root accounts = those with no shorter-code ancestor in this type's set.
+            $roots = $typeAccounts->filter(function ($acc) use ($typeAccounts) {
+                foreach ($typeAccounts as $other) {
+                    if ($other->id === $acc->id)                    continue;
+                    if (strlen($other->code) >= strlen($acc->code)) continue;
+                    if (str_starts_with($acc->code, $other->code))  return false;
+                }
+                return true;
+            })->sortBy('code')->values();
 
-            match ($row->type) {
-                'asset'     => $assets[]      = $entry,
-                'liability' => $liabilities[] = $entry,
-                'equity'    => $equity[]      = $entry,
-                default     => null,
+            $section = [];
+            foreach ($roots as $root) {
+                $section = array_merge($section, $emitSubtree($root, 0, $typeAccounts));
+            }
+
+            match ($type) {
+                'asset'     => $assets      = $section,
+                'liability' => $liabilities = $section,
+                'equity'    => $equity      = $section,
             };
         }
 
-        // Add YTD net income to retained earnings
-        // Find fiscal year start for this period
+        // Step 6 — Inject YTD net income as a synthetic equity line.
         $fyStart = $this->fiscalYearStart($companyId, $asOfDate, $fiscalYearId);
-
         if ($fyStart) {
-            $plData     = $this->fetchPLData($companyId, $fyStart, $asOfDate);
-            $netIncome  = $plData['net_income'];
-
-            // Inject as a synthetic "Net Income (Current Year)" equity line
+            $plData    = $this->fetchPLData($companyId, $fyStart, $asOfDate);
+            $netIncome = $plData['net_income'];
             if ($netIncome != 0) {
                 $equity[] = [
-                    'account_id' => null,
-                    'code'       => 'RE_YTD',
-                    'name_en'    => __('Net Income — Current Year'),
-                    'name_ar'    => __('صافي الربح — السنة الحالية'),
-                    'balance'    => $netIncome,
+                    'account_id'           => null,
+                    'parent_id'            => null,
+                    'code'                 => 'RE_YTD',
+                    'name_en'              => __('Net Income — Current Year'),
+                    'name_ar'              => __('صافي الربح — السنة الحالية'),
+                    'balance'              => $netIncome,
+                    'allow_direct_posting' => false,
                 ];
             }
         }
 
-        // 📌 BcmathMonetaryPrecision — section totals accumulated with bcadd
+        // Step 7 — Section totals.
+        // Sum the balances of the TOP-LEVEL group headers only (the shortest
+        // code per section prefix: "1000" for assets, "2000" for liabilities,
+        // "3000" for equity). If no single root header exists, fall back to
+        // summing all posting leaves directly to avoid double-counting.
+        //
+        // Double-counting explanation: if we sum every row, a leaf "1110001"
+        // and its header "1110" both appear in $assets — adding them would
+        // count the leaf's value twice. We must sum only the outermost level.
+        //
+        // Strategy: sum posting leaves only (they are the atomic units).
+        // The rolled-up header values are for display only — not for totals.
+        // 📌 BcmathMonetaryPrecision
         $totalAssets      = '0';
         $totalLiabilities = '0';
         $totalEquity      = '0';
-        foreach ($assets      as $a) { $totalAssets      = bcadd($totalAssets,      (string)$a['balance'], 4); }
-        foreach ($liabilities as $l) { $totalLiabilities = bcadd($totalLiabilities, (string)$l['balance'], 4); }
-        foreach ($equity      as $e) { $totalEquity      = bcadd($totalEquity,      (string)$e['balance'], 4); }
+
+        foreach ($postingAccounts as $leaf) {
+            $leafBalance = $balanceMap[$leaf->id] ?? '0';
+            match ($leaf->type) {
+                'asset'     => $totalAssets      = bcadd($totalAssets,      $leafBalance, 4),
+                'liability' => $totalLiabilities = bcadd($totalLiabilities, $leafBalance, 4),
+                'equity'    => $totalEquity      = bcadd($totalEquity,      $leafBalance, 4),
+                default     => null,
+            };
+        }
+
+        // Also include YTD net income in equity total
+        if (isset($netIncome)) {
+            $totalEquity = bcadd($totalEquity, (string)$netIncome, 4);
+        }
 
         // Balance sheet assertion: assets = liabilities + equity (±0.01)
         $liabPlusEquity = bcadd($totalLiabilities, $totalEquity, 4);
@@ -355,9 +541,9 @@ class FinancialReportService
 
         return [
             'as_of_date'        => $asOfDate,
-            'assets'            => $assets,
-            'liabilities'       => $liabilities,
-            'equity'            => $equity,
+            'assets'            => array_values($assets),
+            'liabilities'       => array_values($liabilities),
+            'equity'            => array_values($equity),
             'total_assets'      => (float) bcadd($totalAssets,      '0', 2),
             'total_liabilities' => (float) bcadd($totalLiabilities, '0', 2),
             'total_equity'      => (float) bcadd($totalEquity,      '0', 2),

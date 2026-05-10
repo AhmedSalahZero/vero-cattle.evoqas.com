@@ -5,6 +5,23 @@ import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
 import { Head, useForm } from '@inertiajs/vue3';
+import { useLocale } from '@/Composables/useLocale';
+
+const { t } = useLocale();
+const tx = {
+    en: {
+        title: 'Confirm Password',
+        intro: 'This is a secure area of the application. Please confirm your password before continuing.',
+        password: 'Password',
+        confirm: 'Confirm',
+    },
+    ar: {
+        title: 'تأكيد كلمة المرور',
+        intro: 'هذه منطقة آمنة في التطبيق. يرجى تأكيد كلمة المرور قبل المتابعة.',
+        password: 'كلمة المرور',
+        confirm: 'تأكيد',
+    },
+};
 
 const form = useForm({
     password: '',
@@ -19,16 +36,15 @@ const submit = () => {
 
 <template>
     <GuestLayout>
-        <Head title="Confirm Password" />
+        <Head :title="t(tx, '').title" />
 
         <div class="mb-4 text-sm text-gray-600 dark:text-gray-400">
-            This is a secure area of the application. Please confirm your
-            password before continuing.
+            {{ t(tx, '').intro }}
         </div>
 
         <form @submit.prevent="submit">
             <div>
-                <InputLabel for="password" value="Password" />
+                <InputLabel for="password" :value="t(tx, '').password" />
                 <TextInput
                     id="password"
                     type="password"
@@ -47,7 +63,7 @@ const submit = () => {
                     :class="{ 'opacity-25': form.processing }"
                     :disabled="form.processing"
                 >
-                    Confirm
+                    {{ t(tx, '').confirm }}
                 </PrimaryButton>
             </div>
         </form>

@@ -43,7 +43,7 @@ class FxRateController extends Controller
     public function index(Request $request)
     {
         $authUser  = Auth::user();
-        $companyId = $this->resolveCompanyId($authUser, $request);
+        $companyId = $this->resolveFxCompanyId($authUser, $request);
 
         abort_unless(
             $authUser->is_super_admin ||
@@ -80,7 +80,7 @@ class FxRateController extends Controller
             403
         );
 
-        $companyId = $this->resolveCompanyId($authUser, $request, true);
+        $companyId = $this->resolveFxCompanyId($authUser, $request, true);
 
         $validated = $request->validate([
             'rate_date'          => 'required|date',
@@ -134,7 +134,7 @@ class FxRateController extends Controller
     public function latest(Request $request)
     {
         $authUser  = Auth::user();
-        $companyId = $this->resolveCompanyId($authUser, $request);
+        $companyId = $this->resolveFxCompanyId($authUser, $request);
 
         abort_unless($companyId > 0, 422, 'company_id required');
 
@@ -253,10 +253,10 @@ class FxRateController extends Controller
         ];
     }
 
-    private function resolveCompanyId($authUser, Request $request, bool $required = false): ?int
+    private function resolveFxCompanyId($authUser, Request $request, bool $required = false): ?int
     {
         if ($authUser->is_super_admin) {
-            $id = (int) $request->input('company_id', 0);
+            $id = (int) $request->session()->get('selected_company_id', 0);
             if ($required) {
                 abort_unless($id > 0, 422, __('messages.company_required_for_super_admin'));
             }

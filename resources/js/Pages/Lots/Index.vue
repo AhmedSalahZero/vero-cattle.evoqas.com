@@ -111,7 +111,7 @@ function formatDate(dateStr) {
     )
 }
 
-// Days remaining to target slaughter
+// Days remaining to planned sale date
 function daysToTarget(target) {
     if (!target) return null
     const diff = Math.ceil((new Date(target) - new Date()) / 86400000)
@@ -119,7 +119,7 @@ function daysToTarget(target) {
 }
 
 function daysLabel(lot) {
-    const d = daysToTarget(lot.target_slaughter_date)
+    const d = daysToTarget(lot.target_sale_date)
     if (d === null) return null
     if (d < 0)  return locale.value === 'ar' ? `تجاوز ${Math.abs(d)} يوم` : `${Math.abs(d)}d overdue`
     if (d === 0) return locale.value === 'ar' ? 'اليوم' : 'Today'
@@ -127,7 +127,7 @@ function daysLabel(lot) {
 }
 
 function daysClass(lot) {
-    const d = daysToTarget(lot.target_slaughter_date)
+    const d = daysToTarget(lot.target_sale_date)
     if (d === null) return ''
     if (d < 0)  return 'days-overdue'
     if (d <= 14) return 'days-soon'
@@ -365,11 +365,11 @@ function statusLabel(status) {
                             </div>
                         </div>
 
-                        <!-- Target slaughter / days remaining -->
-                        <div v-if="lot.target_slaughter_date" class="target-row">
+                        <!-- Planned sale date / days remaining -->
+                        <div v-if="lot.target_sale_date" class="target-row">
                             <div class="target-label">
-                                {{ locale === 'ar' ? 'هدف الذبح:' : 'Target slaughter:' }}
-                                <span class="target-date">{{ formatDate(lot.target_slaughter_date) }}</span>
+                                {{ locale === 'ar' ? 'موعد البيع:' : 'Planned sale:' }}
+                                <span class="target-date">{{ formatDate(lot.target_sale_date) }}</span>
                             </div>
                             <span v-if="lot.status === 'active'" :class="['days-chip', daysClass(lot)]">
                                 {{ daysLabel(lot) }}

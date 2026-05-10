@@ -12,6 +12,7 @@ use App\Models\ProcurementItemLine;
 use App\Models\ProcurementLine;
 use App\Models\ProcurementRecord;
 use App\Models\Supplier;
+use App\Models\AnimalBreed;
 use App\Services\InventoryReceiptService;
 use App\Services\LivestockReceiptService;
 use Illuminate\Http\Request;
@@ -161,7 +162,7 @@ class ProcurementController extends Controller
 
             $validated = $this->validateInventoryPoRecord($request);
             $this->authorizeFarm($authUser, $validated['farm_id']);
-            $companyId = $this->resolveCompanyId($authUser, $validated['farm_id'], $request);
+            $companyId = $this->resolveProcurementCompanyId($authUser, $validated['farm_id'], $request);
 
             DB::transaction(function () use ($validated, $companyId, $request) {
                 $record = ProcurementRecord::create([
@@ -196,7 +197,7 @@ class ProcurementController extends Controller
 
             $validated = $this->validateRecord($request);
             $this->authorizeFarm($authUser, $validated['farm_id'] ?? null);
-            $companyId = $this->resolveCompanyId($authUser, $validated['farm_id'] ?? null, $request);
+            $companyId = $this->resolveProcurementCompanyId($authUser, $validated['farm_id'] ?? null, $request);
 
             DB::transaction(function () use ($validated, $companyId, $request) {
                 $record = ProcurementRecord::create([
@@ -503,6 +504,10 @@ class ProcurementController extends Controller
 
         $procurementRecord->load(['supplier:id,name_en,name_ar', 'farm:id,name_en,name_ar', 'lot:id,name']);
 
+         $companyId = $authUser->is_super_admin
+        ? $procurementRecord->company_id   // derive from the PO itself, not session
+        : $authUser->company_id;
+
         // Renders Animals/CreateEdit.vue with the PO injected.
         // The Vue page detects the `po` prop and renders in purchase mode.
         return Inertia::render('Animals/CreateEdit', [
@@ -511,6 +516,11 @@ class ProcurementController extends Controller
             'farms'        => collect(),    // locked from PO — no selector needed
             'lots'         => collect(),    // locked from PO — no selector needed
             'suppliers'    => collect(),    // locked from PO — no selector needed
+            'breeds'    => AnimalBreed::where('company_id', $companyId)
+                          ->where('is_active', true)
+                          ->orderBy('name_en')
+                          ->get(['id', 'name_en', 'name_ar']),
+            
         ]);
     }
 
@@ -621,7 +631,7 @@ class ProcurementController extends Controller
         $validated = $this->validateInventoryPoRecord($request);
         $this->authorizeFarm($authUser, $validated['farm_id']);
 
-        $companyId = $this->resolveCompanyId($authUser, $validated['farm_id'], $request);
+        $companyId = $this->resolveProcurementCompanyId($authUser, $validated['farm_id'], $request);
 
         DB::transaction(function () use ($validated, $companyId, $request) {
 
@@ -784,7 +794,12 @@ class ProcurementController extends Controller
         return back()->with('success', __('messages.po_confirmed'));
     }
 
-    // ── Receive Inventory (renders InventoryReceive.vue) ──────────
+    // ── Receive Inventory ─────────────────────────────────────────────
+    // NOTE: The procurement.receive-inventory route is not called by Show.vue.
+    // The active inventory receive flow goes directly to Inventory/Transactions.vue
+    // with ?po_id= context (route: inventory.transactions).
+    // confirmInventoryReceipt() below handles the actual POST submission.
+    // This method is kept as a safety redirect in case the URL is hit directly.
     public function receiveInventory(Request $request, ProcurementRecord $procurementRecord)
     {
         $authUser = Auth::user();
@@ -806,15 +821,19 @@ class ProcurementController extends Controller
             __('messages.po_not_open_for_receipt')
         );
 
-        $procurementRecord->load([
-            'supplier:id,name_en,name_ar',
-            'farm:id,name_en,name_ar',
-            'itemLines.inventoryItem',
-            'itemLines.location',
-        ]);
+        // Redirect to the working flow — find the first open item line
+        // and land on its Inventory/Transactions.vue page with PO context.
+        $procurementRecord->load(['itemLines']);
 
-        return Inertia::render('Procurement/InventoryReceive', [
-            'procurement' => $this->formatRecord($procurementRecord),
+        $firstLine = $procurementRecord->itemLines
+            ->where('line_status', 'open')
+            ->first();
+
+        abort_unless($firstLine, 422, __('messages.po_not_open_for_receipt'));
+
+        return redirect()->route('inventory.transactions', [
+            'inventoryItem' => $firstLine->inventory_item_id,
+            'po_id'         => $procurementRecord->id,
         ]);
     }
 
@@ -1339,16 +1358,20 @@ class ProcurementController extends Controller
         ]);
     }
 
-    private function resolveCompanyId($authUser, ?int $farmId, Request $request): int
+    private function resolveProcurementCompanyId($authUser, ?int $farmId, Request $request): int
     {
         if ($authUser->is_super_admin) {
-            $companyId = $farmId
-                ? Farm::findOrFail($farmId)->company_id
-                : (int) $request->input('company_id');
-            abort_unless((int) $companyId > 0, 422, 'Company required for Super Admin');
+            // If a farm is selected, derive company from it (most authoritative).
+            // Otherwise fall back to session-based selected company.
+            if ($farmId) {
+                $companyId = (int) Farm::findOrFail($farmId)->company_id;
+            } else {
+                $companyId = (int) $request->session()->get('selected_company_id', 0);
+            }
+            abort_unless($companyId > 0, 422, 'Please enter a company first from the Companies page.');
             return $companyId;
         }
-        return $authUser->company_id;
+        return (int) $authUser->company_id;
     }
 
     private function availableFarms($authUser): \Illuminate\Support\Collection

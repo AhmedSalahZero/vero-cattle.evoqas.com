@@ -54,7 +54,7 @@ class PaymentController extends Controller
     public function index(Request $request)
     {
         $authUser  = Auth::user();
-        $companyId = $this->resolveCompanyId($authUser, $request);
+        $companyId = $this->resolvePaymentCompanyId($authUser, $request);
 
         abort_unless(
             $authUser->is_super_admin ||
@@ -141,7 +141,7 @@ class PaymentController extends Controller
             403
         );
 
-        $companyId = $this->resolveCompanyId($authUser, $request, true);
+        $companyId = $this->resolvePaymentCompanyId($authUser, $request, true);
 
         $this->sanitizePaymentNullables($request);
         $validated = $this->validatePaymentStore($request);
@@ -187,8 +187,20 @@ class PaymentController extends Controller
         DB::transaction(function () use ($validated, $companyId, $allocations) {
 
             $category = $validated['payment_category'];
-            $type     = str_ends_with($category, '_payment') || in_array($category, ['expense_payment','other_payment'])
+            $subType  = $validated['sub_type'] ?? null;
+
+            // 📌 METHODOLOGY REFERENCE: NonPartnerPaymentClassification (#31) — Fix #1
+            // General rule: categories ending in '_payment' and expense/other payments are outgoing.
+            // Exception: funding_from_shareholders is a sub_type of shareholder_collection (INCOMING).
+            // Money received from shareholders as capital injection or shareholder loan is cash IN.
+            // Before the fix it was incorrectly classified as outgoing because 'shareholder_payment'
+            // ends with '_payment'. The sub_type check overrides the category-level derivation.
+            $type = str_ends_with($category, '_payment') || in_array($category, ['expense_payment','other_payment'])
                         ? 'outgoing' : 'incoming';
+
+            if ($subType === 'funding_from_shareholders') {
+                $type = 'incoming';
+            }
 
             // Create the payment header
             $payment = Payment::create([
@@ -378,7 +390,7 @@ class PaymentController extends Controller
     public function getChecks(Request $request)
     {
         $authUser  = Auth::user();
-        $companyId = $this->resolveCompanyId($authUser, $request);
+        $companyId = $this->resolvePaymentCompanyId($authUser, $request);
 
         abort_unless(
             $authUser->is_super_admin ||
@@ -757,14 +769,14 @@ class PaymentController extends Controller
         ];
     }
 
-    private function resolveCompanyId($authUser, Request $request, bool $required = false): ?int
+    private function resolvePaymentCompanyId($authUser, Request $request, bool $required = false): ?int
     {
         if ($authUser->is_super_admin) {
-            $id = (int) $request->input('company_id', 0);
+            $id = (int) $request->session()->get('selected_company_id', 0);
             if ($required) {
                 abort_unless($id > 0, 422, __('messages.company_required_for_super_admin'));
             }
-            return $id > 0 ? $id : Company::value('id');
+            return $id > 0 ? $id : null;
         }
         return $authUser->company_id;
     }

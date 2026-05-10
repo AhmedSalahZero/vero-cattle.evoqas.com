@@ -28,6 +28,7 @@ use Illuminate\Database\Seeder;
 //    1130    Accumulated Depreciation
 //    1200  Long-term Assets (group)
 //    1210    Long-term Deposits
+//    1220    Projects Under Progress           ← NEW (Session 65c)
 //    1300  Current Assets (group)
 //    1310    Livestock WIP Inventory          ← THE KEY ACCOUNT
 //    1320    Feed Inventory
@@ -78,6 +79,10 @@ use Illuminate\Database\Seeder;
 //    6600    Bank Charges
 //    6700    Interest Expense
 //    6800    Gain / Loss on Asset Disposal
+//    6900    G&A Expenses (group)             ← NEW (Session 65c)
+//    6910      General Expenses
+//    6920      Sales Expenses
+//    6930      Marketing Expenses
 // ══════════════════════════════════════════════════════════════════
 
 class ChartOfAccountsSeeder extends Seeder
@@ -172,6 +177,17 @@ class ChartOfAccountsSeeder extends Seeder
                 'code' => '1210', 'parent_code' => '1200',
                 'name_en' => 'Long-term Deposits', 'name_ar' => 'الودائع طويلة الأجل',
                 'type' => 'asset', 'normal_balance' => 'debit', 'posting' => true,
+            ],
+            // FIX 5: Projects Under Progress — accumulates construction/development
+            // costs until the asset is ready for use, then reclassified to Fixed Assets.
+            [
+                'code' => '1220', 'parent_code' => '1200',
+                'name_en' => 'Projects Under Progress', 'name_ar' => 'مشاريع تحت التنفيذ',
+                'type' => 'asset', 'normal_balance' => 'debit', 'posting' => true,
+                'notes' => 'Accumulates all costs for assets under construction (buildings, ' .
+                           'facilities, infrastructure). Reclassify to the appropriate Fixed ' .
+                           'Asset account (1120/1130) when construction is complete and the ' .
+                           'asset is ready for its intended use.',
             ],
 
             [
@@ -388,6 +404,34 @@ class ChartOfAccountsSeeder extends Seeder
                 'name_en' => 'Gain / Loss on Asset Disposal', 'name_ar' => 'ربح / خسارة بيع الأصول',
                 'type' => 'expense', 'normal_balance' => 'debit', 'posting' => true,
                 'notes' => 'Can be debit (loss) or credit (gain) depending on disposal price vs book value.',
+            ],
+
+            // FIX 4: Missing expense categories requested in Session 65c review.
+            // General / Sales / Marketing expenses are separate from farm operating
+            // expenses (6000 group) — they represent SG&A costs at company level.
+            [
+                'code' => '6900', 'parent_code' => '6000',
+                'name_en' => 'General & Administrative Expenses', 'name_ar' => 'المصروفات العمومية والإدارية',
+                'type' => 'expense', 'normal_balance' => 'debit', 'posting' => false,
+                'notes' => 'Group header for non-farm overhead expenses at company level.',
+            ],
+            [
+                'code' => '6910', 'parent_code' => '6900',
+                'name_en' => 'General Expenses', 'name_ar' => 'مصروفات عمومية',
+                'type' => 'expense', 'normal_balance' => 'debit', 'posting' => true,
+                'notes' => 'Miscellaneous company-level overhead not attributable to farm operations.',
+            ],
+            [
+                'code' => '6920', 'parent_code' => '6900',
+                'name_en' => 'Sales Expenses', 'name_ar' => 'مصروفات المبيعات',
+                'type' => 'expense', 'normal_balance' => 'debit', 'posting' => true,
+                'notes' => 'Direct costs of selling — commissions, transport to buyer, auction fees.',
+            ],
+            [
+                'code' => '6930', 'parent_code' => '6900',
+                'name_en' => 'Marketing Expenses', 'name_ar' => 'مصروفات التسويق',
+                'type' => 'expense', 'normal_balance' => 'debit', 'posting' => true,
+                'notes' => 'Advertising, promotions, trade shows, digital marketing.',
             ],
         ];
     }

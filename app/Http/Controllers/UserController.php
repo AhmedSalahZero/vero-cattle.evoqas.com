@@ -73,6 +73,8 @@ class UserController extends Controller
         'fx_rates',
         'budgets',
         'reports',
+        'statements',
+        'analytics',
         'settings',
         'tasks',
         'customers',

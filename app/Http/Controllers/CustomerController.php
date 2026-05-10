@@ -127,9 +127,8 @@ class CustomerController extends Controller
 
         $this->sanitizeNullableFields($request);
 
-        $companyId = $authUser->is_super_admin
-            ? $request->input('company_id', $authUser->company_id)
-            : $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $validated = $this->validateCustomer($request);
 

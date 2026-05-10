@@ -57,20 +57,14 @@ class FeedItemController extends Controller
             403
         );
 
-         // 📌 Super Admin Rule: company_id from request, never from auth user
-        $companyId = $authUser->is_super_admin
-            ? (int) $request->input('company_id')
-            : (int) $authUser->company_id;
-
-        abort_unless($companyId > 0, 422, 'company_id is required.');
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $validated = $this->validateItem($request);
 
         FeedItem::create([
             ...$validated,
-            'company_id' => $authUser->is_super_admin
-                ? $request->company_id
-                : $authUser->company_id,
+            'company_id' => $companyId,
         ]);
 
         return back()->with('success', __('messages.feed_item_created'));

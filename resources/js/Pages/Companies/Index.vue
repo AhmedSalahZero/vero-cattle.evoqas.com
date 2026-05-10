@@ -14,8 +14,9 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 defineOptions({ layout: AuthenticatedLayout })
 
 const props = defineProps({
-    companies:   { type: Array, default: () => [] },
-    warningDays: { type: Number, default: 30 },
+    companies:       { type: Array,  default: () => [] },
+    warningDays:     { type: Number, default: 30 },
+    activeCompanyId: { type: Number, default: null },  // session('selected_company_id')
 })
 
 const page  = usePage()
@@ -66,6 +67,14 @@ function subLabel(c) {
     if (days <= props.warningDays) return `${days} day${days===1?'':'s'} left`
     const m = Math.round(days / 30)
     return `${m} month${m===1?'':'s'} left`
+}
+
+// ── Enter / Exit company context ──────────────────────────────────
+function enterCompany(c) {
+    router.post(route('companies.enter', c.id))
+}
+function exitCompany() {
+    router.post(route('companies.exit'))
 }
 
 // ── Delete confirm ─────────────────────────────────────────────────
@@ -135,6 +144,25 @@ function avatarGrad(c) { return gradients[(c.id ?? 0) % gradients.length] }
             </div>
 
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-14 pt-6">
+
+                <!-- ══ ACTIVE COMPANY BANNER ══════════════════════ -->
+                <div v-if="activeCompanyId" class="active-company-banner mb-5">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M9 9v.01M9 12v.01M9 15v.01M9 18v.01"/>
+                        </svg>
+                        <span>
+                            Currently operating in:
+                            <strong>{{ companies.find(c => c.id === activeCompanyId)?.name_en ?? 'Company #' + activeCompanyId }}</strong>
+                        </span>
+                    </div>
+                    <button class="exit-btn" @click="exitCompany">
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                        Exit Company
+                    </button>
+                </div>
 
                 <!-- ══ FLASH ═══════════════════════════════════════ -->
                 <Transition name="fade">
@@ -322,6 +350,16 @@ function avatarGrad(c) { return gradients[(c.id ?? 0) % gradients.length] }
                         <div class="co-footer">
                             <span class="co-id">#{{ company.id }}</span>
                             <div class="co-actions">
+                                <!-- Enter company context -->
+                                <button @click="enterCompany(company)"
+                                        class="act-btn act-enter"
+                                        :class="{ 'act-enter-active': activeCompanyId === company.id }"
+                                        :title="activeCompanyId === company.id ? 'Currently active' : 'Enter this company'">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>
+                                    </svg>
+                                    {{ activeCompanyId === company.id ? 'Active' : 'Enter' }}
+                                </button>
                                 <Link :href="route('companies.edit', company.id)" class="act-btn act-edit" title="Edit">
                                     <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                         <path stroke-linecap="round" stroke-linejoin="round"
@@ -682,6 +720,36 @@ function avatarGrad(c) { return gradients[(c.id ?? 0) % gradients.length] }
     background: rgba(192,57,43,0.16); border-color: rgba(192,57,43,0.45);
     box-shadow: 0 2px 8px rgba(192,57,43,0.15);
 }
+.act-enter {
+    background: rgba(29,111,164,0.08); color: #1D6FA4; border-color: rgba(29,111,164,0.22);
+}
+.act-enter:hover {
+    background: rgba(29,111,164,0.16); border-color: rgba(29,111,164,0.45);
+    box-shadow: 0 2px 8px rgba(29,111,164,0.15);
+}
+.act-enter-active {
+    background: rgba(26,107,58,0.12); color: #1A6B3A; border-color: rgba(26,107,58,0.4);
+}
+
+/* Active company banner */
+.active-company-banner {
+    display: flex; align-items: center; justify-content: space-between;
+    background: rgba(29,111,164,0.08);
+    border: 1px solid rgba(29,111,164,0.25);
+    border-radius: 10px; padding: 0.625rem 1rem;
+    color: #1D6FA4; font-size: 0.8125rem; font-weight: 600;
+}
+.exit-btn {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    font-size: 0.75rem; font-weight: 700;
+    padding: 0.3rem 0.7rem; border-radius: 6px;
+    background: rgba(192,57,43,0.08); color: #C0392B;
+    border: 1px solid rgba(192,57,43,0.22);
+    cursor: pointer; font-family: inherit;
+    transition: background 0.15s;
+}
+.exit-btn:hover { background: rgba(192,57,43,0.16); }
+
 .act-disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
 
 /* ── Empty state ────────────────────────────────────────────────── */

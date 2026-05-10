@@ -38,6 +38,8 @@ use App\Http\Controllers\OpeningBalanceController;
 use App\Http\Controllers\FxRateController;
 use App\Http\Controllers\AnalyticsReportController;
 use App\Http\Controllers\FarmCostAllocationController;
+use App\Http\Controllers\StatementController;
+use App\Http\Controllers\SettingsController;
 
 // ══════════════════════════════════════════════════════
 // PUBLIC — Welcome / Login redirect
@@ -91,17 +93,19 @@ Route::middleware(['auth', \App\Http\Middleware\CheckSubscriptionActive::class])
     // ══════════════════════════════════════════════════════
     // SUPER ADMIN — Company Management
     // ══════════════════════════════════════════════════════
-    Route::prefix('companies')->name('companies.')->group(function () {
-        Route::get('/',                            [CompanyController::class, 'index'])->name('index');
-        Route::get('/create',                      [CompanyController::class, 'create'])->name('create');
-        Route::post('/',                           [CompanyController::class, 'store'])->name('store');
-        Route::get('/{company}',                   [CompanyController::class, 'show'])->name('show');
-        Route::get('/{company}/edit',              [CompanyController::class, 'edit'])->name('edit');
-        Route::put('/{company}',                   [CompanyController::class, 'update'])->name('update');
-        Route::delete('/{company}',                [CompanyController::class, 'destroy'])->name('destroy');
-        Route::patch('/{company}/toggle-active',   [CompanyController::class, 'toggleActive'])->name('toggle-active');
-        Route::patch('/{company}/accounting-mode', [CompanyController::class, 'updateAccountingMode'])->name('accounting-mode');
-    });
+        Route::prefix('companies')->name('companies.')->group(function () {
+            Route::get('/',                            [CompanyController::class, 'index'])->name('index');
+            Route::get('/create',                      [CompanyController::class, 'create'])->name('create');
+            Route::post('/',                           [CompanyController::class, 'store'])->name('store');
+            Route::post('/exit',                       [CompanyController::class, 'exit'])->name('exit');
+            Route::get('/{company}',                   [CompanyController::class, 'show'])->name('show');
+            Route::get('/{company}/edit',              [CompanyController::class, 'edit'])->name('edit');
+            Route::put('/{company}',                   [CompanyController::class, 'update'])->name('update');
+            Route::post('/{company}/enter',            [CompanyController::class, 'enter'])->name('enter');
+            Route::delete('/{company}',                [CompanyController::class, 'destroy'])->name('destroy');
+            Route::patch('/{company}/toggle-active',   [CompanyController::class, 'toggleActive'])->name('toggle-active');
+            Route::patch('/{company}/accounting-mode', [CompanyController::class, 'updateAccountingMode'])->name('accounting-mode');
+        });
 
     // ══════════════════════════════════════════════════════
     // USER MANAGEMENT
@@ -471,16 +475,17 @@ Route::middleware(['auth', \App\Http\Middleware\CheckSubscriptionActive::class])
     // ── Journal Entries ────────────────────────────────────────────
     // IMPORTANT: data-for-company must be BEFORE /{journalEntry} wildcard
     Route::prefix('journal-entries')->name('journal-entries.')->group(function () {
-        Route::get('/data-for-company',              [JournalEntryController::class, 'dataForCompany'])->name('data-for-company');
-        Route::get('/',                              [JournalEntryController::class, 'index'])->name('index');
-        Route::get('/create',                        [JournalEntryController::class, 'create'])->name('create');
-        Route::post('/',                             [JournalEntryController::class, 'store'])->name('store');
-        Route::get('/{journalEntry}',                [JournalEntryController::class, 'show'])->name('show');
-        Route::get('/{journalEntry}/edit',           [JournalEntryController::class, 'edit'])->name('edit');
-        Route::put('/{journalEntry}',                [JournalEntryController::class, 'update'])->name('update');
-        Route::delete('/{journalEntry}',             [JournalEntryController::class, 'destroy'])->name('destroy');
-        Route::patch('/{journalEntry}/post',         [JournalEntryController::class, 'post'])->name('post');
-        Route::post('/{journalEntry}/reverse',       [JournalEntryController::class, 'reverse'])->name('reverse');
+        Route::get('/data-for-company',         [JournalEntryController::class, 'dataForCompany'])->name('data-for-company');
+        Route::get('/',                         [JournalEntryController::class, 'index'])->name('index');
+        Route::get('/create',                   [JournalEntryController::class, 'create'])->name('create');
+        Route::get('/report',                   [JournalEntryController::class, 'journalReport'])->name('report');  // ← fixed
+        Route::post('/',                        [JournalEntryController::class, 'store'])->name('store');
+        Route::get('/{journalEntry}',           [JournalEntryController::class, 'show'])->name('show');
+        Route::get('/{journalEntry}/edit',      [JournalEntryController::class, 'edit'])->name('edit');
+        Route::put('/{journalEntry}',           [JournalEntryController::class, 'update'])->name('update');
+        Route::delete('/{journalEntry}',        [JournalEntryController::class, 'destroy'])->name('destroy');
+        Route::patch('/{journalEntry}/post',    [JournalEntryController::class, 'post'])->name('post');
+        Route::post('/{journalEntry}/reverse',  [JournalEntryController::class, 'reverse'])->name('reverse');
     });
 
     // ── Opening Balances ───────────────────────────────────────────
@@ -634,6 +639,15 @@ Route::middleware(['auth', \App\Http\Middleware\CheckSubscriptionActive::class])
         Route::get('/animal/{animalId}/costing', [ReportController::class, 'animalCosting'])->name('animal-costing');
     });
 
+
+        Route::prefix('statements')->name('statements.')->group(function () {
+        Route::get('/',                        [StatementController::class, 'index'])->name('index');
+        Route::get('/account-ledger',          [StatementController::class, 'accountLedger'])->name('account-ledger');
+        Route::get('/customer-statement',      [StatementController::class, 'customerStatement'])->name('customer-statement');
+        Route::get('/supplier-statement',      [StatementController::class, 'supplierStatement'])->name('supplier-statement');
+        Route::get('/inventory-statement',     [StatementController::class, 'inventoryStatement'])->name('inventory-statement');
+    });
+
  // ══════════════════════════════════════════════════════════════════
 //  VERO — Analytics Report Routes
 //  Paste this block inside routes/web.php, inside the
@@ -661,7 +675,24 @@ Route::prefix('analytics')->name('analytics.')->group(function () {
     Route::get('/feeding-duration',      [AnalyticsReportController::class, 'feedingDuration'])->name('feeding-duration');
     Route::post('/ratio-comment',        [AnalyticsReportController::class, 'saveRatioComment'])->name('ratio-comment');
 });
- 
+
+    // ── Settings ──────────────────────────────────────────────────────
+    Route::prefix('settings')->name('settings.')->group(function () {
+        Route::get('/', [SettingsController::class, 'index'])->name('index');
+    
+        // Breeds
+        Route::post('/breeds',                          [SettingsController::class, 'storeBreed'])->name('breeds.store');
+        Route::patch('/breeds/{animalBreed}',           [SettingsController::class, 'updateBreed'])->name('breeds.update');
+        Route::delete('/breeds/{animalBreed}',          [SettingsController::class, 'destroyBreed'])->name('breeds.destroy');
+        Route::patch('/breeds/{animalBreed}/toggle-active', [SettingsController::class, 'toggleActiveBreed'])->name('breeds.toggle-active');
+    
+        // Inventory Item Templates
+        Route::post('/item-templates',                              [SettingsController::class, 'storeTemplate'])->name('item-templates.store');
+        Route::patch('/item-templates/{inventoryItemTemplate}',     [SettingsController::class, 'updateTemplate'])->name('item-templates.update');
+        Route::delete('/item-templates/{inventoryItemTemplate}',    [SettingsController::class, 'destroyTemplate'])->name('item-templates.destroy');
+        Route::patch('/item-templates/{inventoryItemTemplate}/toggle-active', [SettingsController::class, 'toggleActiveTemplate'])->name('item-templates.toggle-active');
+    });
+    
 
 }); // end auth middleware
 

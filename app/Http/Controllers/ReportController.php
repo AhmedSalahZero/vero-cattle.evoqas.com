@@ -399,14 +399,10 @@ class ReportController extends Controller
             return (int) $user->company_id;
         }
 
-        // SA: prefer explicit company_id from request
-        if ($request->filled('company_id')) {
-            return (int) $request->company_id;
-        }
-
-        // SA fallback: first company (avoids returning 0 / null)
-        $first = DB::table('companies')->orderBy('id')->value('id');
-        return (int) ($first ?? 0);
+        // §6.5 — session-based company resolution for Super Admin
+        $id = (int) $request->session()->get('selected_company_id', 0);
+        abort_unless($id > 0, 422, 'Please enter a company first from the Companies page.');
+        return $id;
     }
 
     /**

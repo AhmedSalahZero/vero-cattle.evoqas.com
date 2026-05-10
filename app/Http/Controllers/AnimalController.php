@@ -6,6 +6,7 @@ use App\Models\Animal;
 use App\Models\Lot;
 use App\Models\Farm;
 use App\Models\Supplier;
+use App\Models\AnimalBreed;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -79,6 +80,7 @@ class AnimalController extends Controller
         return Inertia::render('Animals/BornCreate', [
             'farms' => $this->availableFarms($authUser),
             'lots'  => $this->availableLots($authUser),
+            'breeds' => $this->availableBreeds($authUser),   // ← NEW
         ]);
     }
 
@@ -154,9 +156,8 @@ class AnimalController extends Controller
         }
 
         $animals   = $request->input('animals');
-        $companyId = $authUser->is_super_admin
-            ? (int) $request->input('company_id')
-            : $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
     
 
         // ── Per-row validation ─────────────────────────────────────
@@ -307,6 +308,7 @@ class AnimalController extends Controller
             'farms'     => $this->availableFarms($authUser),
             'lots'      => $this->availableLots($authUser, $animal->farm_id),
             'suppliers' => $this->availableSuppliers($authUser),
+            'breeds'    => $this->availableBreeds($authUser),   // ← ADD
         ]);
     }
 
@@ -382,10 +384,13 @@ class AnimalController extends Controller
         $lot = Lot::findOrFail($request->lot_id);
         $this->authorizeFarm($authUser, $lot->farm_id);
 
-        Animal::whereIn('id', $request->animal_ids)
-            ->where('company_id', $authUser->is_super_admin ? '!=' : '=',
-                $authUser->is_super_admin ? 0 : $authUser->company_id)
-            ->update(['lot_id' => $lot->id]);
+       $query = Animal::whereIn('id', $request->animal_ids);
+
+        if (!$authUser->is_super_admin) {
+            $query->where('company_id', $authUser->company_id);
+        }
+
+        $query->update(['lot_id' => $lot->id]);
 
         return back()->with('success', __('messages.animals_assigned'));
     }
@@ -520,6 +525,19 @@ class AnimalController extends Controller
     {
         if ($authUser->is_super_admin) return;
         $farm = Farm::findOrFail($farmId);
-        abort_unless($farm->company_id === $authUser->company_id, 403);
+        abort_unless((int) $farm->company_id === (int) $authUser->company_id, 403);
+    }
+    private function availableBreeds($authUser): \Illuminate\Support\Collection
+    {
+        $companyId = $authUser->is_super_admin
+            ? session('selected_company_id')
+            : $authUser->company_id;
+    
+        if (!$companyId) return collect();
+    
+        return AnimalBreed::where('company_id', $companyId)
+            ->where('is_active', true)
+            ->orderBy('name_en')
+            ->get(['id', 'name_en', 'name_ar']);
     }
 }

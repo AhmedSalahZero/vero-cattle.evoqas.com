@@ -145,9 +145,8 @@ class OpeningBalanceController extends Controller
         );
 
         $this->sanitizeNullableFields($request);
-        $companyId = $authUser->is_super_admin
-            ? (int) $request->input('company_id', $authUser->company_id)
-            : (int) $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $validated = $this->validateWizard($request);
         $autoPost  = (bool) ($validated['auto_post'] ?? false);

@@ -52,9 +52,8 @@ class FarmCostAllocationController extends Controller
             403
         );
 
-        $companyId = $authUser->is_super_admin
-            ? (int) ($request->company_id ?: Company::value('id'))
-            : (int) $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $query = FarmCostAllocation::with(['farm:id,name', 'fiscalYear:id,year'])
             ->where('company_id', $companyId);
@@ -109,9 +108,8 @@ class FarmCostAllocationController extends Controller
             403
         );
 
-        $companyId = $authUser->is_super_admin
-            ? (int) ($request->company_id ?: Company::value('id'))
-            : (int) $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         return Inertia::render('FarmCostAllocation/CreateEdit', [
             'mode'          => 'create',
@@ -136,9 +134,8 @@ class FarmCostAllocationController extends Controller
 
         $this->sanitizeNullableFields($request);
 
-        $companyId = $authUser->is_super_admin
-            ? (int) ($request->company_id ?: Company::value('id'))
-            : (int) $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         abort_unless((int) $companyId > 0, 422, 'Company required');
 
@@ -353,9 +350,8 @@ class FarmCostAllocationController extends Controller
             'labor_estimated'  => ['required', 'numeric', 'min:0'],
         ]);
 
-        $companyId = $authUser->is_super_admin
-            ? (int) ($request->company_id ?: Company::value('id'))
-            : (int) $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $monthStart = Carbon::createFromDate($request->year, $request->month, 1)
             ->startOfMonth()->toDateString();
@@ -384,9 +380,8 @@ class FarmCostAllocationController extends Controller
             403
         );
 
-        $companyId = $authUser->is_super_admin
-            ? (int) ($request->company_id ?: Company::value('id'))
-            : (int) $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $types = FarmOverheadType::with(['accruedAccount:id,code,name_en,name_ar', 'varianceAccount:id,code,name_en,name_ar'])
             ->where('company_id', $companyId)
@@ -418,9 +413,13 @@ class FarmCostAllocationController extends Controller
 
         $this->sanitizeNullableFields($request);
 
-        $companyId = $authUser->is_super_admin
-            ? (int) ($request->company_id ?: Company::value('id'))
-            : (int) $authUser->company_id;
+        // 🔒 SA hard-block: write operations must have explicit company selection
+        if ($authUser->is_super_admin) {
+            $companyId = (int) $request->input('company_id');
+            abort_unless($companyId > 0, 422, 'Super Admin must select a company before saving.');
+        } else {
+            $companyId = (int) $authUser->company_id;
+        }
 
         $validated = $request->validate([
             'name_en'             => ['nullable', 'string', 'max:255'],

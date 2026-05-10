@@ -9,6 +9,7 @@ use App\Models\InventoryLocation;
 use App\Models\Farm;
 use App\Models\FeedItem;
 use App\Models\Supplier;
+use App\Models\InventoryItemTemplate;
 use App\Services\InventoryLocationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -82,6 +83,7 @@ class InventoryController extends Controller
             'mode'      => 'create',
             'item'      => null,
             'feedItems' => $this->availableFeedItems($authUser),
+            'itemTemplates' => $this->availableItemTemplates($authUser),  // ← NEW
             'companies' => $authUser->is_super_admin
                 ? Company::where('is_active', true)->orderBy('name_en')->get(['id','name_en','name_ar'])
                 : [],
@@ -101,13 +103,8 @@ class InventoryController extends Controller
 
         $this->sanitizeNullableFields($request);
 
-        if ($authUser->is_super_admin) {
-            $companyId = (int) $request->input('company_id');
-            abort_unless($companyId > 0, 422, 'Super admin must select a company.');
-            abort_unless(Company::where('id', $companyId)->exists(), 422, 'Invalid company.');
-        } else {
-            $companyId = $authUser->company_id;
-        }
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $validated = $this->validateMasterItem($request, $companyId);
 
@@ -157,6 +154,7 @@ class InventoryController extends Controller
             'mode'      => 'edit',
             'item'      => $this->formatMaster($inventoryItem),
             'feedItems' => $this->availableFeedItems($authUser),
+            'itemTemplates' => $this->availableItemTemplates($authUser),  // ← NEW
             'companies' => $authUser->is_super_admin
                 ? Company::where('is_active', true)->orderBy('name_en')->get(['id','name_en','name_ar'])
                 : [],
@@ -328,9 +326,11 @@ class InventoryController extends Controller
                 'itemLines.location',
             ])->find((int) $request->po_id);
 
+            // Security: user already passed authorizeCompany() above, so they can
+            // only reach items in their own company. We just verify po_type and
+            // status — no redundant company re-check that risks int/string mismatches.
             if ($poRecord
                 && $poRecord->po_type === 'inventory'
-                && $poRecord->company_id === $inventoryItem->company_id
                 && $poRecord->isOpenForReceipt()
             ) {
                 $po = [
@@ -342,7 +342,11 @@ class InventoryController extends Controller
                         'name_ar' => $poRecord->supplier->name_ar,
                     ] : null,
                     'po_status'    => $poRecord->po_status,
-                    'item_lines'   => $poRecord->itemLines->map(fn($l) => [
+                    // Only return the line(s) for THIS master item — the page
+                    // is scoped to one item, so only its own PO line is relevant.
+                    'item_lines'   => $poRecord->itemLines
+                        ->where('inventory_item_id', $inventoryItem->id)
+                        ->map(fn($l) => [
                         'id'                  => $l->id,
                         'inventory_item_id'   => $l->inventory_item_id,
                         'item_name_en'        => $l->inventoryItem?->name_en,
@@ -819,7 +823,7 @@ class InventoryController extends Controller
     private function authorizeCompany($authUser, int $companyId): void
     {
         if ($authUser->is_super_admin) return;
-        abort_unless($authUser->company_id === $companyId, 403);
+        abort_unless((int) $authUser->company_id === $companyId, 403);
     }
 
     
@@ -838,5 +842,18 @@ class InventoryController extends Controller
             }
         }
         $request->replace($data);
+    }
+    private function availableItemTemplates($authUser): \Illuminate\Support\Collection
+    {
+        $companyId = $authUser->is_super_admin
+            ? session('selected_company_id')
+            : $authUser->company_id;
+    
+        if (!$companyId) return collect();
+    
+        return InventoryItemTemplate::where('company_id', $companyId)
+            ->where('is_active', true)
+            ->orderBy('name_en')
+            ->get(['id', 'name_en', 'name_ar', 'category']);
     }
 }

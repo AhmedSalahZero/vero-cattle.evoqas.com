@@ -143,9 +143,8 @@ class JournalEntryController extends Controller
             403
         );
 
-        $companyId = $authUser->is_super_admin
-            ? (int) $request->input('company_id', $authUser->company_id)
-            : (int) $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         abort_unless($companyId > 0, 422, 'company_id is required.');
 
@@ -683,6 +682,97 @@ class JournalEntryController extends Controller
                 'foreign_amount'   => $l->foreign_amount,
                 'exchange_rate'    => $l->exchange_rate,
             ]) : [],
+        ]);
+    }
+
+    // ── Journal Book Report ───────────────────────────────────────
+    // 📌 METHODOLOGY REFERENCE: JournalBookReport (#52)
+    // Fetches all posted journal_entries + lines between two dates.
+    // Ordered by date ASC, id ASC.
+    // Grand totals via bcmath. Both manual and auto entries included.
+    public function journalReport(Request $request)
+    {
+        $authUser = Auth::user();
+
+        abort_unless(
+            $authUser->is_super_admin ||
+            $authUser->hasPermissionTo('view journal_entries'),
+            403
+        );
+
+        $companyId = $this->resolveCompanyId($request);
+        abort_unless((int)$companyId > 0, 422, 'Company required');
+
+        // Vue sends date_from / date_to (matches reportForm keys in Index.vue)
+        $fromDate = $request->input('date_from');
+        $toDate   = $request->input('date_to');
+
+        // Vue prop names (must match Report.vue defineProps exactly):
+        //   report      — array of entries
+        //   grandDebit  — bcmath string
+        //   grandCredit — bcmath string
+        //   filters     — { date_from, date_to }
+        //   entryCount  — integer
+        //   line keys   — account_code, account_en, account_ar, memo, debit, credit
+
+        // If no dates provided, render empty report page
+        if (!$fromDate || !$toDate) {
+            return Inertia::render('Accounting/JournalEntries/Report', [
+                'report'      => [],
+                'grandDebit'  => '0.00',
+                'grandCredit' => '0.00',
+                'filters'     => ['date_from' => $fromDate, 'date_to' => $toDate],
+                'entryCount'  => 0,
+            ]);
+        }
+
+        $entries = JournalEntry::with(['lines.account:id,code,name_en,name_ar'])
+            ->where('company_id', $companyId)
+            ->where('status', 'posted')
+            ->whereDate('date', '>=', $fromDate)
+            ->whereDate('date', '<=', $toDate)
+            ->orderBy('date')
+            ->orderBy('id')
+            ->get()
+            ->map(function ($entry) {
+                return [
+                    'id'           => $entry->id,
+                    'reference'    => $entry->reference,
+                    'date'         => $entry->date instanceof \Carbon\Carbon
+                        ? $entry->date->format('Y-m-d')
+                        : $entry->date,
+                    'entry_type'   => $entry->entry_type,
+                    'description'  => $entry->description,
+                    'total_debit'  => (float) $entry->total_debit,
+                    'total_credit' => (float) $entry->total_credit,
+                    'lines'        => $entry->lines->map(fn($l) => [
+                        'id'           => $l->id,
+                        'account_code' => $l->account?->code,
+                        'account_en'   => $l->account?->name_en,   // matches line.account_en in Vue
+                        'account_ar'   => $l->account?->name_ar,   // matches line.account_ar in Vue
+                        'memo'         => $l->memo,
+                        'debit'        => (float) $l->debit,
+                        'credit'       => (float) $l->credit,
+                    ])->all(),
+                ];
+            });
+
+        // Grand totals via bcmath (#38)
+        $totalDebit  = '0';
+        $totalCredit = '0';
+        foreach ($entries as $entry) {
+            foreach ($entry['lines'] as $line) {
+                $totalDebit  = bcadd($totalDebit,  (string) $line['debit'],  2);
+                $totalCredit = bcadd($totalCredit, (string) $line['credit'], 2);
+            }
+        }
+
+        return Inertia::render('Accounting/JournalEntries/Report', [
+            'report'      => $entries->values()->all(),
+            'grandDebit'  => $totalDebit,
+            'grandCredit' => $totalCredit,
+            'filters'     => ['date_from' => $fromDate, 'date_to' => $toDate],
+            'entryCount'  => $entries->count(),
         ]);
     }
 

@@ -91,11 +91,16 @@ class InventoryLocationController extends Controller
             ]);
         }
 
+        // §6.5 Super Admin company_id resolution:
+        //   - Farm location  → derive company_id from the chosen farm (authoritative)
+        //   - Central location (no farm) → must come explicitly from request
         $companyId = $authUser->is_super_admin
-            ? (isset($validated['farm_id'])
-                ? Farm::findOrFail($validated['farm_id'])->company_id
-                : $request->integer('company_id'))
-            : $authUser->company_id;
+            ? (isset($validated['farm_id']) && $validated['farm_id']
+                ? (int) Farm::findOrFail($validated['farm_id'])->company_id
+                : (int) $request->input('company_id'))
+            : (int) $authUser->company_id;
+
+        abort_unless($companyId > 0, 422, 'A company must be selected for Super Admin.');
 
         $location = InventoryLocation::create([
             ...$validated,

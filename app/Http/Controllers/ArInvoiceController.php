@@ -61,14 +61,12 @@ class ArInvoiceController extends Controller
         // 📌 Correlated subquery — one SQL round-trip, no N+1.
         // Counts payments linked to each AR invoice via the payment_allocations pivot.
         // Falls back to direct ar_invoice_id FK for payments recorded the old way.
-        $paymentCountSub = DB::table('payments')
-            ->selectRaw('COUNT(*)')
-            ->whereColumn('payments.ar_invoice_id', 'ar_invoices.id')
-            ->where('payments.type', 'collection')
-            ->toSql();
-
         $query = ArInvoice::with('customer:id,name_en,name_ar')
-            ->selectRaw("ar_invoices.*, ({$paymentCountSub}) as payment_count");
+        ->selectRaw("ar_invoices.*, (
+            SELECT COUNT(*) FROM payments
+            WHERE payments.ar_invoice_id = ar_invoices.id
+            AND payments.type = 'collection'
+        ) as payment_count");
 
         if ($authUser->is_super_admin) {
             if ($request->filled('company_id')) {
@@ -169,12 +167,8 @@ class ArInvoiceController extends Controller
             403
         );
 
-        // 📌 Super Admin Rule
-        $companyId = $authUser->is_super_admin
-            ? (int) $request->input('company_id')
-            : (int) $authUser->company_id;
-
-        abort_unless($companyId > 0, 422, 'company_id is required.');
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $validated = $this->validateInvoice($request);
 
@@ -182,6 +176,10 @@ class ArInvoiceController extends Controller
         abort_unless($customer->company_id === $companyId, 422, 'Customer does not belong to this company.');
 
         // 📌 InvoiceForeignCurrencyBalance
+        // Explicitly overwrite $validated so no downstream code can use a wrong rate.
+        if (($validated['currency'] ?? 'EGP') === 'EGP') {
+            $validated['exchange_rate'] = 1.0;
+        }
         $currency     = $validated['currency'] ?? 'EGP';
         $exchangeRate = $currency === 'EGP' ? 1.0 : (float)($validated['exchange_rate'] ?? 0);
         abort_unless($exchangeRate > 0, 422, 'Exchange rate must be greater than zero.');
@@ -248,6 +246,10 @@ class ArInvoiceController extends Controller
         $validated = $this->validateInvoice($request);
 
         // 📌 InvoiceForeignCurrencyBalance
+        // Explicitly overwrite $validated to guarantee EGP rate is always 1.0.
+        if (($validated['currency'] ?? $arInvoice->currency) === 'EGP') {
+            $validated['exchange_rate'] = 1.0;
+        }
         $currency     = $validated['currency'] ?? $arInvoice->currency;
         $exchangeRate = $currency === 'EGP' ? 1.0 : (float)($validated['exchange_rate'] ?? $arInvoice->exchange_rate);
         abort_unless($exchangeRate > 0, 422, 'Exchange rate must be greater than zero.');

@@ -5,6 +5,23 @@ import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
 import { Head, useForm } from '@inertiajs/vue3';
+import { useLocale } from '@/Composables/useLocale';
+
+const { t } = useLocale();
+const tx = {
+    en: {
+        title: 'Forgot Password',
+        intro: 'Forgot your password? No problem. Just let us know your email address and we will email you a password reset link that will allow you to choose a new one.',
+        email: 'Email',
+        submit: 'Email Password Reset Link',
+    },
+    ar: {
+        title: 'نسيت كلمة المرور',
+        intro: 'نسيت كلمة المرور؟ لا مشكلة. فقط أخبرنا بعنوان بريدك الإلكتروني وسنرسل لك رابط إعادة تعيين كلمة المرور لتتمكن من اختيار كلمة جديدة.',
+        email: 'البريد الإلكتروني',
+        submit: 'إرسال رابط إعادة تعيين كلمة المرور',
+    },
+};
 
 defineProps({
     status: {
@@ -23,12 +40,10 @@ const submit = () => {
 
 <template>
     <GuestLayout>
-        <Head title="Forgot Password" />
+        <Head :title="t(tx, '').title" />
 
         <div class="mb-4 text-sm text-gray-600 dark:text-gray-400">
-            Forgot your password? No problem. Just let us know your email
-            address and we will email you a password reset link that will allow
-            you to choose a new one.
+            {{ t(tx, '').intro }}
         </div>
 
         <div
@@ -40,7 +55,7 @@ const submit = () => {
 
         <form @submit.prevent="submit">
             <div>
-                <InputLabel for="email" value="Email" />
+                <InputLabel for="email" :value="t(tx, '').email" />
 
                 <TextInput
                     id="email"
@@ -60,7 +75,7 @@ const submit = () => {
                     :class="{ 'opacity-25': form.processing }"
                     :disabled="form.processing"
                 >
-                    Email Password Reset Link
+                    {{ t(tx, '').submit }}
                 </PrimaryButton>
             </div>
         </form>

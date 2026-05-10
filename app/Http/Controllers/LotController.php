@@ -58,8 +58,6 @@ class LotController extends Controller
     }
 
     // ── Create ────────────────────────────────────────────────────
-    // Points to Lots/CreateEdit.vue — single file handles both modes.
-    // The Vue page detects create mode via: isEdit = !!props.lot (false here).
     public function create(Request $request)
     {
         $authUser = Auth::user();
@@ -71,7 +69,7 @@ class LotController extends Controller
         );
 
         return Inertia::render('Lots/CreateEdit', [
-            'farms'    => $this->availableFarms($authUser),
+            'farms' => $this->availableFarms($authUser),
         ]);
     }
 
@@ -86,15 +84,10 @@ class LotController extends Controller
             403
         );
 
-        // Converts '' → null for nullable fields before validation.
-        // Required because Inertia always sends empty string for
-        // unfilled inputs, and Laravel's nullable rule requires null.
         $this->sanitizeNullableFields($request);
 
         $validated = $this->validateLot($request);
 
-        // company_id is not submitted by the form — it is derived from
-        // the selected farm to ensure tenant integrity.
         $farm = Farm::findOrFail($validated['farm_id']);
         $this->authorizeFarm($authUser, $farm->id);
 
@@ -125,13 +118,11 @@ class LotController extends Controller
         ]);
 
         return Inertia::render('Lots/Show', [
-            'lot'      => $this->formatLot($lot),
+            'lot' => $this->formatLot($lot),
         ]);
     }
 
     // ── Edit ──────────────────────────────────────────────────────
-    // Points to Lots/CreateEdit.vue — single file handles both modes.
-    // The Vue page detects edit mode via: isEdit = !!props.lot (true here).
     public function edit(Request $request, Lot $lot)
     {
         $authUser = Auth::user();
@@ -145,8 +136,8 @@ class LotController extends Controller
         $this->authorizeFarm($authUser, $lot->farm_id);
 
         return Inertia::render('Lots/CreateEdit', [
-            'lot'      => $this->formatLot($lot),
-            'farms'    => $this->availableFarms($authUser),
+            'lot'   => $this->formatLot($lot),
+            'farms' => $this->availableFarms($authUser),
         ]);
     }
 
@@ -163,12 +154,10 @@ class LotController extends Controller
 
         $this->authorizeFarm($authUser, $lot->farm_id);
 
-        // Converts '' → null for nullable fields before validation.
         $this->sanitizeNullableFields($request);
 
         $validated = $this->validateLot($request, $lot->id);
 
-        // If the farm changed, re-derive company_id from the new farm.
         if ((int) $validated['farm_id'] !== (int) $lot->farm_id) {
             $farm = Farm::findOrFail($validated['farm_id']);
             $this->authorizeFarm($authUser, $farm->id);
@@ -230,45 +219,35 @@ class LotController extends Controller
     // ══════════════════════════════════════════════════════════════
 
     /**
-     * sanitizeNullableFields
-     * ──────────────────────
-     * Inertia always sends an empty string ("") for inputs the user
-     * leaves blank. Laravel's `nullable` validation rule requires an
-     * actual null — not "". This method converts "" → null for every
-     * nullable field before validate() is called.
+     * validateLot
+     * ───────────
+     * Central validation rules for both store() and update().
+     * $ignoreId — the current lot's ID passed during update() so the
+     * unique lot_number rule does not reject the record's own value.
      *
-     * Must be called BEFORE validateLot() in both store() and update().
+     * target_sale_date: the planned date this batch of fattened cattle
+     * will be ready for live sale. Drives the 30-day advance alert
+     * on the dashboard.
      */
-
-
-  /**
- * validateLot
- * ───────────
- * Central validation rules for both store() and update().
- * $ignoreId — the current lot's ID passed during update() so the
- * unique lot_number rule does not reject the record's own existing value.
- * Note: company_id is intentionally excluded — it is always
- * derived server-side from the selected farm, never from user input.
- */
     private function validateLot(Request $request, ?int $ignoreId = null): array
     {
         return $request->validate([
-            'farm_id'               => 'required|exists:farms,id',
-            'name'                  => 'required|string|max:255',
-            'lot_number' => [
-                                'nullable',
-                                'string',
-                                'max:255',
-                                Rule::unique('lots', 'lot_number')
-                                    ->where('farm_id', $request->farm_id)
-                                    ->ignore($ignoreId),
-                            ],
-            'start_date'            => 'required|date',
-            'target_slaughter_date' => 'nullable|date|after:start_date',
-            'pen'                   => 'nullable|string|max:255',
-            'status'                => ['nullable', Rule::in(['active', 'completed', 'archived'])],
-            'notes_en'              => 'nullable|string',
-            'notes_ar'              => 'nullable|string',
+            'farm_id'          => 'required|exists:farms,id',
+            'name'             => 'required|string|max:255',
+            'lot_number'       => [
+                                    'nullable',
+                                    'string',
+                                    'max:255',
+                                    Rule::unique('lots', 'lot_number')
+                                        ->where('farm_id', $request->farm_id)
+                                        ->ignore($ignoreId),
+                                  ],
+            'start_date'       => 'required|date',
+            'target_sale_date' => 'nullable|date|after:start_date',
+            'pen'              => 'nullable|string|max:255',
+            'status'           => ['nullable', Rule::in(['active', 'completed', 'archived'])],
+            'notes_en'         => 'nullable|string',
+            'notes_ar'         => 'nullable|string',
         ]);
     }
 
@@ -276,30 +255,28 @@ class LotController extends Controller
      * formatLot
      * ─────────
      * Shapes a Lot model into the exact array the Vue pages expect.
-     * Always returns both notes_en and notes_ar so the bilingual
-     * form can populate both fields regardless of active locale.
      */
     private function formatLot(Lot $lot): array
     {
         return [
-            'id'                    => $lot->id,
-            'farm_id'               => $lot->farm_id,
-            'farm'                  => $lot->farm ? [
+            'id'               => $lot->id,
+            'farm_id'          => $lot->farm_id,
+            'farm'             => $lot->farm ? [
                 'id'      => $lot->farm->id,
                 'name_en' => $lot->farm->name_en,
                 'name_ar' => $lot->farm->name_ar,
             ] : null,
-            'name'                  => $lot->name,
-            'lot_number'            => $lot->lot_number,
-            'start_date'            => $lot->start_date?->toDateString(),
-            'target_slaughter_date' => $lot->target_slaughter_date?->toDateString(),
-            'closed_date'           => $lot->closed_date?->toDateString(),
-            'pen'                   => $lot->pen,
-            'status'                => $lot->status,
-            'notes_en'              => $lot->notes_en,
-            'notes_ar'              => $lot->notes_ar,
-            'animals_count'         => $lot->animals_count ?? 0,
-            'animals'               => $lot->relationLoaded('animals')
+            'name'             => $lot->name,
+            'lot_number'       => $lot->lot_number,
+            'start_date'       => $lot->start_date       ? \Carbon\Carbon::parse($lot->start_date)->toDateString()       : null,
+            'target_sale_date' => $lot->target_sale_date ? \Carbon\Carbon::parse($lot->target_sale_date)->toDateString() : null,
+            'closed_date'      => $lot->closed_date      ? \Carbon\Carbon::parse($lot->closed_date)->toDateString()      : null,
+            'pen'              => $lot->pen,
+            'status'           => $lot->status,
+            'notes_en'         => $lot->notes_en,
+            'notes_ar'         => $lot->notes_ar,
+            'animals_count'    => $lot->animals_count ?? 0,
+            'animals'          => $lot->relationLoaded('animals')
                 ? $lot->animals->map(fn($a) => [
                     'id'     => $a->id,
                     'tag'    => $a->tag,
@@ -308,15 +285,13 @@ class LotController extends Controller
                     'status' => $a->status,
                 ])
                 : [],
-            'created_at'            => $lot->created_at?->format('d M Y'),
+            'created_at'       => $lot->created_at?->format('d M Y'),
         ];
     }
 
     /**
      * availableFarms
      * ──────────────
-     * Super-admin sees all active farms across all companies.
-     * Regular users see only farms belonging to their own company.
      */
     private function availableFarms($authUser): \Illuminate\Support\Collection
     {
@@ -333,14 +308,12 @@ class LotController extends Controller
     /**
      * authorizeFarm
      * ─────────────
-     * Ensures the authenticated user belongs to the same company
-     * as the farm being accessed. Super-admins bypass this check.
      */
     private function authorizeFarm($authUser, int $farmId): void
     {
         if ($authUser->is_super_admin) return;
 
         $farm = Farm::findOrFail($farmId);
-        abort_unless($farm->company_id === $authUser->company_id, 403);
+        abort_unless((int) $farm->company_id === (int) $authUser->company_id, 403);
     }
 }

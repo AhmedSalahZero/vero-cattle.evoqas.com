@@ -9,6 +9,13 @@
  *   - NEVER type="hidden" — v-show="false" keeps v-model active
  *   - Both always submitted regardless of active locale
  * ─────────────────────────────────────────────────────────────────
+ * FIELD RENAME (Session 65d):
+ *   target_slaughter_date → target_sale_date
+ *   VERO is a buy-fatten-sell-live operation. This date is the
+ *   planned date the fattened batch will be ready for live sale,
+ *   not a slaughter target. Slaughter is an edge case for sick or
+ *   unfit animals only.
+ * ─────────────────────────────────────────────────────────────────
  */
 import { computed } from 'vue'
 import { useForm, Link } from '@inertiajs/vue3'
@@ -16,8 +23,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 
 const props = defineProps({
-    lot:      { type: Object, default: null },
-    farms:    { type: Array,  default: () => [] },
+    lot:   { type: Object, default: null },
+    farms: { type: Array,  default: () => [] },
 })
 
 const { locale, isRtl, n } = useLocale()
@@ -36,33 +43,34 @@ const txt = computed(() => ({
     previewFallback: locale.value === 'ar' ? 'مجموعة جديدة' : 'New Lot',
 
     // Section 1
-    s1Title:  locale.value === 'ar' ? 'بيانات المجموعة'     : 'Lot Identity',
-    s1Sub:    locale.value === 'ar' ? 'الاسم والرقم المرجعي': 'Name and reference number',
-    nameLabel:locale.value === 'ar' ? 'اسم المجموعة *'      : 'Lot Name *',
-    namePh:   locale.value === 'ar' ? 'مثال: دورة صيف 2025' : 'e.g. Summer 2025 Batch',
-    numLabel: locale.value === 'ar' ? 'الرقم المرجعي'       : 'Lot Number',
-    numPh:    locale.value === 'ar' ? 'مثال: LOT-2025-001'  : 'e.g. LOT-2025-001',
+    s1Title:  locale.value === 'ar' ? 'بيانات المجموعة'      : 'Lot Identity',
+    s1Sub:    locale.value === 'ar' ? 'الاسم والرقم المرجعي' : 'Name and reference number',
+    nameLabel:locale.value === 'ar' ? 'اسم المجموعة *'       : 'Lot Name *',
+    namePh:   locale.value === 'ar' ? 'مثال: دورة صيف 2025'  : 'e.g. Summer 2025 Batch',
+    numLabel: locale.value === 'ar' ? 'الرقم المرجعي'        : 'Lot Number',
+    numPh:    locale.value === 'ar' ? 'مثال: LOT-2025-001'   : 'e.g. LOT-2025-001',
 
     // Section 2
-    s2Title:  locale.value === 'ar' ? 'الموقع'              : 'Location',
-    s2Sub:    locale.value === 'ar' ? 'المزرعة والحظيرة'    : 'Farm and pen assignment',
-    farmLabel:locale.value === 'ar' ? 'المزرعة *'           : 'Farm *',
-    farmPh:   locale.value === 'ar' ? '— اختر المزرعة —'   : '— Select Farm —',
-    penLabel: locale.value === 'ar' ? 'الحظيرة / القسم'     : 'Pen / Enclosure',
-    penPh:    locale.value === 'ar' ? 'مثال: حظيرة أ - 3'  : 'e.g. Pen A-3',
+    s2Title:  locale.value === 'ar' ? 'الموقع'               : 'Location',
+    s2Sub:    locale.value === 'ar' ? 'المزرعة والحظيرة'     : 'Farm and pen assignment',
+    farmLabel:locale.value === 'ar' ? 'المزرعة *'            : 'Farm *',
+    farmPh:   locale.value === 'ar' ? '— اختر المزرعة —'    : '— Select Farm —',
+    penLabel: locale.value === 'ar' ? 'الحظيرة / القسم'      : 'Pen / Enclosure',
+    penPh:    locale.value === 'ar' ? 'مثال: حظيرة أ - 3'   : 'e.g. Pen A-3',
 
     // Section 3
-    s3Title:  locale.value === 'ar' ? 'الجدول الزمني'       : 'Schedule',
-    s3Sub:    locale.value === 'ar' ? 'تاريخ البدء وهدف الذبح' : 'Start date and slaughter target',
-    startLabel: locale.value === 'ar' ? 'تاريخ البدء *'     : 'Start Date *',
-    targetLabel:locale.value === 'ar' ? 'هدف الذبح (اختياري)': 'Target Slaughter Date',
-    targetHint: locale.value === 'ar'
-        ? 'يُستخدم لحساب الأيام المتبقية في لوحة المتابعة'
-        : 'Used to calculate remaining days on the dashboard',
-    statusLabel:locale.value === 'ar' ? 'الحالة'            : 'Status',
+    s3Title:     locale.value === 'ar' ? 'الجدول الزمني'          : 'Schedule',
+    s3Sub:       locale.value === 'ar' ? 'تاريخ البدء والبيع المخطط' : 'Start date and planned sale date',
+    startLabel:  locale.value === 'ar' ? 'تاريخ البدء *'          : 'Start Date *',
+    targetLabel: locale.value === 'ar' ? 'تاريخ البيع المخطط'     : 'Planned Sale Date',
+    // Hint explains the business purpose clearly — not a technical note
+    targetHint:  locale.value === 'ar'
+        ? 'الموعد المتوقع لبيع الدفعة حيةً — يُنشئ تنبيهاً مسبقاً بـ 30 يوماً في لوحة المتابعة'
+        : 'Expected date to sell this batch live — triggers a 30-day advance alert on the dashboard',
+    statusLabel: locale.value === 'ar' ? 'الحالة'                 : 'Status',
 
     // Section 4
-    s4Title:  locale.value === 'ar' ? 'ملاحظات'             : 'Notes',
+    s4Title:  locale.value === 'ar' ? 'ملاحظات'                       : 'Notes',
     s4Sub:    locale.value === 'ar' ? 'ملاحظات إضافية عن هذه المجموعة' : 'Additional notes about this lot',
     notesEnLabel: 'Notes (English)',
     notesEnPh:    'Any relevant notes about this lot...',
@@ -73,35 +81,35 @@ const txt = computed(() => ({
         : 'Notes are saved in both languages automatically',
 
     // Status options
-    statusActive:    locale.value === 'ar' ? 'نشط'    : 'Active',
-    statusCompleted: locale.value === 'ar' ? 'مكتمل'  : 'Completed',
-    statusArchived:  locale.value === 'ar' ? 'مؤرشف'  : 'Archived',
+    statusActive:    locale.value === 'ar' ? 'نشط'   : 'Active',
+    statusCompleted: locale.value === 'ar' ? 'مكتمل' : 'Completed',
+    statusArchived:  locale.value === 'ar' ? 'مؤرشف' : 'Archived',
 
     // Footer
-    cancel:  locale.value === 'ar' ? 'إلغاء'           : 'Cancel',
-    saving:  locale.value === 'ar' ? 'جارٍ الحفظ...'   : 'Saving...',
+    cancel:  locale.value === 'ar' ? 'إلغاء'          : 'Cancel',
+    saving:  locale.value === 'ar' ? 'جارٍ الحفظ...'  : 'Saving...',
     submit:  isEdit.value
-        ? (locale.value === 'ar' ? 'حفظ التعديلات' : 'Save Changes')
-        : (locale.value === 'ar' ? 'إنشاء المجموعة': 'Create Lot'),
+        ? (locale.value === 'ar' ? 'حفظ التعديلات'  : 'Save Changes')
+        : (locale.value === 'ar' ? 'إنشاء المجموعة' : 'Create Lot'),
 }))
 
 // ── Form state ────────────────────────────────────────────────────
 // Both notes_en AND notes_ar always present — bilingual rule §Vue
 const form = useForm({
-    farm_id:               props.lot?.farm_id               ?? '',
-    name:                  props.lot?.name                   ?? '',
-    lot_number:            props.lot?.lot_number             ?? '',
-    start_date:            props.lot?.start_date             ?? '',
-    target_slaughter_date: props.lot?.target_slaughter_date  ?? '',
-    pen:                   props.lot?.pen                    ?? '',
-    status:                props.lot?.status                 ?? 'active',
-    notes_en:              props.lot?.notes_en               ?? '',
-    notes_ar:              props.lot?.notes_ar               ?? '',
+    farm_id:          props.lot?.farm_id          ?? '',
+    name:             props.lot?.name             ?? '',
+    lot_number:       props.lot?.lot_number        ?? '',
+    start_date:       props.lot?.start_date        ?? '',
+    target_sale_date: props.lot?.target_sale_date  ?? '',   // renamed from target_slaughter_date
+    pen:              props.lot?.pen               ?? '',
+    status:           props.lot?.status            ?? 'active',
+    notes_en:         props.lot?.notes_en          ?? '',
+    notes_ar:         props.lot?.notes_ar          ?? '',
 })
 
 // ── Live preview ──────────────────────────────────────────────────
-const previewName   = computed(() => form.name      || txt.value.previewFallback)
-const previewNumber = computed(() => form.lot_number ? `#${form.lot_number}` : '')
+const previewName   = computed(() => form.name       || txt.value.previewFallback)
+const previewNumber = computed(() => form.lot_number  ? `#${form.lot_number}` : '')
 
 // ── Submit ────────────────────────────────────────────────────────
 function submit() {
@@ -238,7 +246,7 @@ function submit() {
                         </div>
                     </div>
 
-                    <!-- ─── SECTION 3: Schedule ───────────────────── -->
+                    <!-- ─── SECTION 3: Schedule ──────────────────── -->
                     <div class="cv-card section-card">
                         <div class="section-header">
                             <div class="section-badge badge-3">3</div>
@@ -261,19 +269,21 @@ function submit() {
                                 />
                                 <p v-if="form.errors.start_date" class="cv-field-error">{{ form.errors.start_date }}</p>
                             </div>
-                            <!-- Target slaughter date -->
+
+                            <!-- Planned sale date (renamed from target_slaughter_date) -->
                             <div class="cv-field">
-                                <label class="cv-label" for="lot-target">{{ txt.targetLabel }}</label>
+                                <label class="cv-label" for="lot-target-sale">{{ txt.targetLabel }}</label>
                                 <input
-                                    id="lot-target"
-                                    v-model="form.target_slaughter_date"
+                                    id="lot-target-sale"
+                                    v-model="form.target_sale_date"
                                     type="date"
                                     class="cv-input"
-                                    :class="{ 'cv-input-error': form.errors.target_slaughter_date }"
+                                    :class="{ 'cv-input-error': form.errors.target_sale_date }"
                                 />
                                 <p class="cv-field-hint">{{ txt.targetHint }}</p>
-                                <p v-if="form.errors.target_slaughter_date" class="cv-field-error">{{ form.errors.target_slaughter_date }}</p>
+                                <p v-if="form.errors.target_sale_date" class="cv-field-error">{{ form.errors.target_sale_date }}</p>
                             </div>
+
                             <!-- Status — edit mode only -->
                             <div class="cv-field" v-if="isEdit">
                                 <label class="cv-label" for="lot-status">{{ txt.statusLabel }}</label>
@@ -555,7 +565,7 @@ function submit() {
     letter-spacing: 0.05em;
 }
 
-.cv-input,.cv-textarea {
+.cv-input, .cv-textarea {
     background: var(--cv-bg-base);
     border: 1px solid var(--cv-border);
     border-radius: 0.5rem;
@@ -567,8 +577,9 @@ function submit() {
     width: 100%;
 }
 
-.cv-select{
-width: 100%; padding: 0.5rem 0.75rem;
+.cv-select {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
     background: var(--cv-bg-base);
     border: 1px solid var(--cv-border);
     border-radius: 7px;
@@ -577,7 +588,6 @@ width: 100%; padding: 0.5rem 0.75rem;
     transition: border-color 0.15s, box-shadow 0.15s;
     outline: none;
     font-family: inherit;
-
 }
 
 .cv-input:focus,

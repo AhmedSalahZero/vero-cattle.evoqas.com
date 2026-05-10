@@ -146,13 +146,11 @@ const inventoryItemsSubtotal = computed(() =>
 
 const isDraft       = computed(() => po.value.po_status === 'draft')
 const canReceiveNow = computed(() => po.value.can_receive)
-// First open item line — used to navigate to its transactions page with PO context
-const inventoryReceiveUrl = computed(() => {
-    const firstOpenLine = inventoryItemLines.value.find(l => l.line_status === 'open')
-    const itemId = firstOpenLine?.inventory_item_id ?? inventoryItemLines.value[0]?.inventory_item_id
-    if (!itemId) return route('procurement.show', po.value.id)
-    return route('inventory.transactions', itemId) + '?po_id=' + po.value.id
-})
+// Per-line receive URL — each item navigates to its own transactions page with PO context
+function inventoryLineReceiveUrl(line) {
+    if (!line?.inventory_item_id) return route('procurement.show', po.value.id)
+    return route('inventory.transactions', line.inventory_item_id) + '?po_id=' + po.value.id
+}
 // Auto-scroll to receipt section when arriving via #receipt hash (from Index.vue button)
 onMounted(() => {
     if (window.location.hash === '#receipt') {
@@ -229,17 +227,7 @@ onMounted(() => {
                     {{ lang === 'ar' ? 'استلام حيوانات' : 'Receive Animals' }}
                 </Link>
 
-                <!-- ★ RECEIVE ITEMS — inventory POs only ★ -->
-                <Link v-if="isInventory && canReceive && canReceiveNow"
-                     :href="inventoryReceiveUrl"
-                      class="cv-btn cv-btn-green">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-                         stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
-                        <path d="M20 7H4a2 2 0 00-2 2v6a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/>
-                        <path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>
-                    </svg>
-                    {{ lang === 'ar' ? 'استلام بضاعة' : 'Receive Items' }}
-                </Link>
+                <!-- ★ RECEIVE ITEMS — inventory POs: use per-line Receive buttons in the table below ★ -->
 
                 <!-- Force Close -->
                 <button v-if="canEdit && po.can_force_close"
@@ -580,6 +568,7 @@ onMounted(() => {
                                 <th style="padding:.6rem 1rem;text-align:end;font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--cv-blue-text)">{{ lang === 'ar' ? 'سعر الوحدة' : 'Unit Cost' }}</th>
                                 <th style="padding:.6rem 1rem;text-align:end;font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--cv-blue-text)">{{ lang === 'ar' ? 'الإجمالي' : 'Total' }}</th>
                                 <th style="padding:.6rem 1rem;text-align:center;font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--cv-text-muted)">{{ lang === 'ar' ? 'الحالة' : 'Status' }}</th>
+                                <th v-if="canReceive && canReceiveNow" style="padding:.6rem 1rem;text-align:center;font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--cv-text-muted)">{{ lang === 'ar' ? 'استلام' : 'Receive' }}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -619,6 +608,20 @@ onMounted(() => {
                                     </span>
                                     <div v-if="line.is_over_received" style="font-size:.6rem;color:var(--cv-danger-text);margin-top:2px;font-weight:600">⚠ {{ lang === 'ar' ? 'تجاوز' : 'Over' }}</div>
                                 </td>
+                                <!-- Per-line Receive button — only shown on open/partially received lines -->
+                                <td v-if="canReceive && canReceiveNow" style="padding:.65rem 1rem;text-align:center">
+                                    <Link v-if="line.line_status === 'open' || line.line_status === 'partially_received'"
+                                          :href="inventoryLineReceiveUrl(line)"
+                                          class="cv-btn cv-btn-amber"
+                                          style="font-size:.68rem;padding:.28rem .65rem;white-space:nowrap">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                                             stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;display:inline;margin-inline-end:3px">
+                                            <polyline points="8 17 3 12 8 7"/><line x1="21" y1="12" x2="3" y2="12"/>
+                                        </svg>
+                                        {{ lang === 'ar' ? 'استلام' : 'Receive' }}
+                                    </Link>
+                                    <span v-else style="font-size:.65rem;color:var(--cv-text-muted)">—</span>
+                                </td>
                             </tr>
                         </tbody>
                     </table>
@@ -634,16 +637,7 @@ onMounted(() => {
                             ({{ inventoryReceiptBatches.length }} {{ lang === 'ar' ? 'دفعة' : 'batch(es)' }})
                         </span>
                     </div>
-                    <Link v-if="canReceive && canReceiveNow"
-                          :href="inventoryReceiveUrl"
-                          class="cv-btn cv-btn-green"
-                          style="font-size:.72rem;padding:.35rem .75rem">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-                             stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px">
-                            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                        </svg>
-                        {{ lang === 'ar' ? 'استلام دفعة جديدة' : 'Receive New Batch' }}
-                    </Link>
+                    <!-- Receive buttons are per-item in the Ordered Items table above -->
                 </div>
 
                 <div v-if="inventoryReceiptBatches.length > 0" style="overflow-x:auto">
@@ -692,12 +686,9 @@ onMounted(() => {
                     <div style="font-size:.8rem;color:var(--cv-text-muted);margin-bottom:.75rem">
                         {{ lang === 'ar' ? 'لم يتم استلام بضاعة بعد' : 'No items received yet' }}
                     </div>
-                    <Link v-if="canReceive && canReceiveNow"
-                          :href="inventoryReceiveUrl"
-                          class="cv-btn cv-btn-amber"
-                          style="font-size:.78rem">
-                        {{ lang === 'ar' ? 'ابدأ الاستلام الآن' : 'Start Receiving Now' }}
-                    </Link>
+                    <div v-if="canReceive && canReceiveNow" style="font-size:.75rem;color:var(--cv-amber);margin-top:.25rem">
+                        {{ lang === 'ar' ? '← استخدم زر «استلام» بجانب كل صنف في الجدول أعلاه' : '← Use the Receive button next to each item in the table above' }}
+                    </div>
                 </div>
             </div>
 

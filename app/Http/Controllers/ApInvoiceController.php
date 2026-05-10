@@ -210,12 +210,8 @@ class ApInvoiceController extends Controller
             403
         );
 
-        // 📌 Super Admin Rule: company_id from request, never from auth user
-        $companyId = $authUser->is_super_admin
-            ? (int) $request->input('company_id')
-            : (int) $authUser->company_id;
-
-        abort_unless($companyId > 0, 422, 'company_id is required.');
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $validated = $this->validateInvoice($request);
 
@@ -224,6 +220,11 @@ class ApInvoiceController extends Controller
         abort_unless($supplier->company_id === $companyId, 422, 'Supplier does not belong to this company.');
 
         // 📌 InvoiceForeignCurrencyBalance: EGP always rate=1, foreign requires rate>0
+        // Explicitly overwrite $validated so no downstream code can use a wrong rate,
+        // even if the raw API payload submitted a non-1.0 rate with currency=EGP.
+        if (($validated['currency'] ?? 'EGP') === 'EGP') {
+            $validated['exchange_rate'] = 1.0;
+        }
         $currency     = $validated['currency'] ?? 'EGP';
         $exchangeRate = $currency === 'EGP' ? 1.0 : (float)($validated['exchange_rate'] ?? 0);
         abort_unless($exchangeRate > 0, 422, 'Exchange rate must be greater than zero.');
@@ -337,6 +338,10 @@ class ApInvoiceController extends Controller
         $validated = $this->validateInvoice($request);
 
         // 📌 InvoiceForeignCurrencyBalance: re-validate rate on update
+        // Explicitly overwrite $validated to guarantee EGP rate is always 1.0.
+        if (($validated['currency'] ?? $apInvoice->currency) === 'EGP') {
+            $validated['exchange_rate'] = 1.0;
+        }
         $currency     = $validated['currency'] ?? $apInvoice->currency;
         $exchangeRate = $currency === 'EGP' ? 1.0 : (float)($validated['exchange_rate'] ?? $apInvoice->exchange_rate);
         abort_unless($exchangeRate > 0, 422, 'Exchange rate must be greater than zero.');

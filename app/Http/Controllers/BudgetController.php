@@ -44,10 +44,8 @@ class BudgetController extends Controller
             403
         );
 
-        // Super Admin: resolve company_id from request or fall back to first company
-        $companyId = $authUser->is_super_admin
-            ? (int) ($request->input('company_id') ?: Company::value('id'))
-            : $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
         $fiscalYearId = $request->input('fiscal_year_id');
 
         // Default to the currently open fiscal year

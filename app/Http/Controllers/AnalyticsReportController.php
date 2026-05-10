@@ -800,9 +800,10 @@ class AnalyticsReportController extends Controller
     {
         $user = Auth::user();
         if ($user->is_super_admin) {
-            $id = (int) $request->input('company_id');
-            if ($id > 0) return $id;
-            return (int) \App\Models\Company::value('id');
+            // §6.5 — session-based company resolution for Super Admin
+            $id = (int) $request->session()->get('selected_company_id', 0);
+            abort_unless($id > 0, 422, 'Please enter a company first from the Companies page.');
+            return $id;
         }
         return (int) $user->company_id;
     }

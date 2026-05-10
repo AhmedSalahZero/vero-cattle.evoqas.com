@@ -149,13 +149,17 @@ class VaccinationController extends Controller
         ]);
 
         // ── Step 2: Resolve company + authorize ───────────────────
+        // §6.5 Super Admin company_id resolution — derive from lot's farm.
         $lot = Lot::with('farm')->findOrFail($request->lot_id);
         $companyId = $authUser->is_super_admin
-            ? $lot->farm->company_id
-            : $authUser->company_id;
+            ? (int) $lot->farm->company_id
+            : (int) $authUser->company_id;
 
+        abort_unless($companyId > 0, 422, 'Company could not be resolved.');
+
+        // Non-SA guard: lot must belong to the user's company.
         if (!$authUser->is_super_admin) {
-            abort_unless($companyId === $authUser->company_id, 403);
+            abort_unless((int) $lot->farm->company_id === (int) $authUser->company_id, 403);
         }
 
         // ── Step 3: Verify all animals belong to this lot ─────────

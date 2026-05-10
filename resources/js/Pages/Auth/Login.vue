@@ -1,8 +1,65 @@
 <script setup>
 import { ref } from 'vue'
 import { Head, Link, useForm } from '@inertiajs/vue3'
+import { useLocale } from '@/Composables/useLocale'
 
 const showPassword = ref(false)
+const { locale, isRtl, setLocale, t } = useLocale()
+
+const tx = {
+	en: {
+		pageTitle: 'Login — Vero Cattle Management',
+		headlineLine1: 'Smarter Cattle Management',
+		headlineLine2: 'Manage your herd with confidence',
+		featureHerd1: 'Herd',
+		featureHerd2: 'Management',
+		featureFinancial1: 'Financial',
+		featureFinancial2: 'Intelligence',
+		featureSecure1: 'Secure &',
+		featureSecure2: 'Reliable',
+		welcomeBack: 'Welcome back',
+		signInSubtitle: 'Sign in to your Vero Cattle Management account',
+		emailLabel: 'Email Address',
+		emailPlaceholder: 'Enter your email address',
+		passwordLabel: 'Password',
+		forgotPassword: 'Forgot password?',
+		passwordPlaceholder: 'Enter your password',
+		showPassword: 'Show password',
+		hidePassword: 'Hide password',
+		rememberMe: 'Remember me for 30 days',
+		signIn: 'Sign in to Vero',
+		or: 'or',
+		contactAdmin: 'Contact your farm administrator',
+		securityNote: 'Secure access. Your data is protected.',
+		languageSwitch: 'العربية',
+	},
+	ar: {
+		pageTitle: 'تسجيل الدخول — Vero Cattle Management',
+		headlineLine1: 'إدارة الماشية بذكاء',
+		headlineLine2: 'أدر قطيعك بثقة',
+		featureHerd1: 'إدارة',
+		featureHerd2: 'القطيع',
+		featureFinancial1: 'ذكاء',
+		featureFinancial2: 'مالي',
+		featureSecure1: 'آمن',
+		featureSecure2: 'وموثوق',
+		welcomeBack: 'مرحبًا بعودتك',
+		signInSubtitle: 'سجّل الدخول إلى حساب Vero Cattle Management',
+		emailLabel: 'البريد الإلكتروني',
+		emailPlaceholder: 'أدخل بريدك الإلكتروني',
+		passwordLabel: 'كلمة المرور',
+		forgotPassword: 'هل نسيت كلمة المرور؟',
+		passwordPlaceholder: 'أدخل كلمة المرور',
+		showPassword: 'إظهار كلمة المرور',
+		hidePassword: 'إخفاء كلمة المرور',
+		rememberMe: 'تذكرني لمدة 30 يومًا',
+		signIn: 'تسجيل الدخول إلى Vero',
+		or: 'أو',
+		contactAdmin: 'تواصل مع مسؤول المزرعة',
+		securityNote: 'دخول آمن. بياناتك محمية.',
+		languageSwitch: 'English',
+	},
+}
 
 const form = useForm({
 	email: '',
@@ -18,8 +75,11 @@ const submit = () => {
 </script>
 <template>
 
-	<Head title="Login — Vero Cattle Management" />
-	<div class="cv-root">
+	<Head :title="t(tx, '').pageTitle" />
+	<div class="cv-root" :dir="isRtl ? 'rtl' : 'ltr'">
+		<button type="button" class="cv-lang-btn" @click="setLocale(locale === 'en' ? 'ar' : 'en')">
+			{{ t(tx, '').languageSwitch }}
+		</button>
 		<!-- ══════════════════════════════════════
              LEFT PANEL — Brand / Hero
              Background: /images/cattle-bg.jpg
@@ -34,8 +94,8 @@ const submit = () => {
 					<span class="cv-login-logo-vero">VERO</span>
 					<span class="cv-login-logo-sub">CATTLE MANAGEMENT</span>
 					<span class="cv-login-logo-divider"></span>
-					<h1 class="cv-headline"> Smarter Cattle Management<br />
-						<span class="cv-headline-accent">Manage your herd with confidence</span>
+					<h1 class="cv-headline"> {{ t(tx, '').headlineLine1 }}<br />
+						<span class="cv-headline-accent">{{ t(tx, '').headlineLine2 }}</span>
 					</h1>
 				</div>
 				<!-- MIDDLE: Headline -->
@@ -59,8 +119,8 @@ const submit = () => {
 							</svg>
 						</div>
 						<div class="cv-feature-label">
-							<span>Herd</span>
-							<span>Management</span>
+							<span>{{ t(tx, '').featureHerd1 }}</span>
+							<span>{{ t(tx, '').featureHerd2 }}</span>
 						</div>
 					</div>
 					<!-- Financial Intelligence -->
@@ -73,8 +133,8 @@ const submit = () => {
 							</svg>
 						</div>
 						<div class="cv-feature-label">
-							<span>Financial</span>
-							<span>Intelligence</span>
+							<span>{{ t(tx, '').featureFinancial1 }}</span>
+							<span>{{ t(tx, '').featureFinancial2 }}</span>
 						</div>
 					</div>
 					<!-- Secure & Reliable -->
@@ -86,8 +146,8 @@ const submit = () => {
 							</svg>
 						</div>
 						<div class="cv-feature-label">
-							<span>Secure &amp;</span>
-							<span>Reliable</span>
+							<span>{{ t(tx, '').featureSecure1 }}</span>
+							<span>{{ t(tx, '').featureSecure2 }}</span>
 						</div>
 					</div>
 				</div><!-- /features -->
@@ -104,14 +164,14 @@ const submit = () => {
 				</div>
 				<!-- Heading -->
 				<div class="cv-form-heading">
-					<h2>Welcome back</h2>
-					<p>Sign in to your Vero Cattle Management account</p>
+					<h2>{{ t(tx, '').welcomeBack }}</h2>
+					<p>{{ t(tx, '').signInSubtitle }}</p>
 				</div>
 				<!-- Form -->
 				<form @submit.prevent="submit" class="cv-form" novalidate>
 					<!-- Email -->
 					<div class="cv-field">
-						<label class="cv-label" for="login-email">EMAIL ADDRESS</label>
+						<label class="cv-label" for="login-email">{{ t(tx, '').emailLabel }}</label>
 						<div class="cv-input-wrap">
 							<span class="cv-input-icon cv-icon-left">
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -122,7 +182,7 @@ const submit = () => {
 								</svg>
 							</span>
 							<input id="login-email" type="email" v-model="form.email" autocomplete="username"
-								placeholder="Enter your email address" required
+								:placeholder="t(tx, '').emailPlaceholder" required
 								:class="['cv-input', form.errors.email ? 'cv-input--error' : '']" />
 						</div>
 						<p v-if="form.errors.email" class="cv-error">{{ form.errors.email }}</p>
@@ -130,8 +190,9 @@ const submit = () => {
 					<!-- Password -->
 					<div class="cv-field">
 						<div class="cv-field-row">
-							<label class="cv-label" for="login-password">PASSWORD</label>
-							<Link :href="route('password.request')" class="cv-forgot"> Forgot password? </Link>
+							<label class="cv-label" for="login-password">{{ t(tx, '').passwordLabel }}</label>
+							<Link :href="route('password.request')" class="cv-forgot"> {{ t(tx, '').forgotPassword }}
+							</Link>
 						</div>
 						<div class="cv-input-wrap">
 							<span class="cv-input-icon cv-icon-left">
@@ -143,11 +204,11 @@ const submit = () => {
 							</span>
 							<input id="login-password" :type="showPassword ? 'text' : 'password'"
 								v-model="form.password" autocomplete="current-password"
-								placeholder="Enter your password" required
+								:placeholder="t(tx, '').passwordPlaceholder" required
 								:class="['cv-input cv-input--pr', form.errors.password ? 'cv-input--error' : '']" />
 							<button type="button" class="cv-input-icon cv-icon-right cv-eye-btn"
 								@click="showPassword = !showPassword"
-								:aria-label="showPassword ? 'Hide password' : 'Show password'">
+								:aria-label="showPassword ? t(tx, '').hidePassword : t(tx, '').showPassword">
 								<svg v-if="!showPassword" width="15" height="15" viewBox="0 0 24 24" fill="none"
 									stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
 									stroke-linejoin="round">
@@ -177,21 +238,21 @@ const submit = () => {
 								</svg>
 							</span>
 						</div>
-						<span class="cv-remember-text">Remember me for 30 days</span>
+						<span class="cv-remember-text">{{ t(tx, '').rememberMe }}</span>
 					</label>
 					<!-- Submit -->
 					<button type="submit" class="cv-submit" :class="{ 'cv-submit--loading': form.processing }"
 						:disabled="form.processing">
-						<span>SIGN IN TO VERO</span>
+						<span>{{ t(tx, '').signIn }}</span>
 					</button>
 					<!-- Divider -->
-					<div class="cv-divider"><span>or</span></div>
+					<div class="cv-divider"><span>{{ t(tx, '').or }}</span></div>
 					<!-- Contact admin -->
 					<button type="button" class="cv-admin-btn">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
 							stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-						</svg> CONTACT YOUR FARM ADMINISTRATOR </button>
+						</svg> {{ t(tx, '').contactAdmin }} </button>
 				</form>
 				<!-- Security note -->
 				<p class="cv-security">
@@ -199,7 +260,7 @@ const submit = () => {
 						stroke-linecap="round" stroke-linejoin="round">
 						<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
 						<path d="M7 11V7a5 5 0 0 1 10 0v4" />
-					</svg> Secure access. Your data is protected.
+					</svg> {{ t(tx, '').securityNote }}
 				</p>
 			</div><!-- /form-wrap -->
 		</div><!-- /right panel -->
@@ -217,6 +278,28 @@ const submit = () => {
 	color: #fff;
 }
 
+.cv-lang-btn {
+	position: fixed;
+	top: 1rem;
+	inset-inline-end: 1rem;
+	z-index: 50;
+	background: rgba(11, 34, 18, 0.92);
+	color: #fff;
+	border: 1px solid rgba(77, 191, 122, 0.45);
+	border-radius: 0.5rem;
+	padding: 0.4rem 0.7rem;
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.cv-lang-btn:hover {
+	background: rgba(77, 191, 122, 0.2);
+	border-color: rgba(77, 191, 122, 0.8);
+}
+
 /* ─────────────────────────────────────────────────────────
    LEFT PANEL
    ⚠️  Requires: public/images/cattle-bg.jpg
@@ -230,7 +313,8 @@ const submit = () => {
 	position: relative;
 	width: 50%;
 	flex-shrink: 0;
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 
 	/* ── THE PHOTO — local file, no external URL ── */
 	background-image: url('/images/cattle-bg.jpg');
@@ -277,30 +361,39 @@ const submit = () => {
 	z-index: 3;
 	display: flex;
 	flex-direction: column;
-	justify-content: space-between;
-	height: 100%;
-	padding: 3rem 3.5rem;
+	justify-content: flex-start;
+	gap: clamp(1rem, 2.5vh, 2rem);
+	min-height: 100%;
+	padding: clamp(1.25rem, 2.5vh, 3rem) clamp(1.25rem, 2.5vw, 3.5rem);
 }
 
 /* ── Logo ── */
 .cv-logo-wrap {
-	position: relative;
-	margin-bottom: 10px;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	width: 100%;
+	margin-bottom: 1rem;
 }
 
 .cv-logo-img {
-	max-height: 200px;
-	max-width: 400px;
-	width: 100%;
+	display: block;
+	width: clamp(220px, 40vw, 360px);
+	max-width: 100%;
+	max-height: min(26vh, 220px);
 	height: auto;
 	object-fit: contain;
 
 	/* Drop shadow for legibility over any photo */
 	filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.60));
-	position: absolute;
-	top: -180px;
-	/* margin-bottom: 120px; */
-	z-index: 0;
+	position: static;
+	z-index: 1;
+}
+
+@media (max-width: 767px) {
+	.cv-logo-img {
+		width: clamp(150px, 55vw, 240px);
+	}
 }
 
 /* ── Headline ── */
@@ -330,6 +423,8 @@ const submit = () => {
 	display: flex;
 	gap: 1.75rem;
 	flex-wrap: wrap;
+	margin-top: auto;
+	padding-top: 0.5rem;
 }
 
 .cv-feature {
@@ -366,7 +461,6 @@ const submit = () => {
 .cv-right {
 	flex: 1;
 	display: flex;
-	align-items: center;
 	justify-content: center;
 	padding: 2.5rem 1.5rem;
 	background-color: #0B2212;
@@ -723,5 +817,20 @@ const submit = () => {
 	display: flex;
 	flex-direction: column;
 	gap: 0.5rem;
+}
+
+@media (max-height: 900px) {
+	.cv-logo-img {
+		width: clamp(190px, 34vw, 300px);
+		max-height: min(20vh, 170px);
+	}
+
+	.cv-headline {
+		font-size: 1.6rem;
+	}
+
+	.cv-features {
+		gap: 1rem;
+	}
 }
 </style>

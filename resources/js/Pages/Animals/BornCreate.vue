@@ -44,8 +44,9 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
 
 const props = defineProps({
-    farms: { type: Array, default: () => [] },
-    lots:  { type: Array, default: () => [] },
+    farms:     { type: Array, default: () => [] },
+    lots:      { type: Array, default: () => [] },
+    breeds:    { type: Array,  default: () => [] },
 })
 
 const { locale, isRtl, n } = useLocale()
@@ -75,6 +76,8 @@ const L = computed(() => locale.value === 'ar' ? {
     sexCastrated:   'مخصي',
     breed:          'السلالة',
     breedPh:        'مثال: فريزيان، عربي...',
+    breedSelect:    '-- اختر السلالة --',
+    breedFallback:  'أو أدخل يدوياً',
     color:          'اللون',
     colorPh:        'مثال: بني، أبلق...',
     markings:       'علامات مميزة',
@@ -132,6 +135,8 @@ const L = computed(() => locale.value === 'ar' ? {
     sexCastrated:   'Castrated',
     breed:          'Breed',
     breedPh:        'e.g. Friesian, Angus...',
+    breedSelect:    '-- Select Breed --',
+    breedFallback:  'or type manually',
     color:          'Color',
     colorPh:        'e.g. Brown, Pied...',
     markings:       'Distinguishing Markings',
@@ -170,6 +175,7 @@ const L = computed(() => locale.value === 'ar' ? {
 // ── Form ──────────────────────────────────────────────────────
 const form = useForm({
     // source is NOT in the form — AnimalController::store() hardcodes 'born'
+    source:             'born_on_farm',   // ← ADD THIS LINE (hidden, never shown in UI)
     farm_id:            '',
     lot_id:             '',
     tag:                '',
@@ -322,9 +328,16 @@ function submit() {
                             <!-- Breed -->
                             <div class="bcv-field bcv-f-md">
                                 <label class="bcv-label">{{ L.breed }}</label>
-                                <input v-model="form.breed" class="bcv-input" :placeholder="L.breedPh" />
+                                <select v-if="breeds && breeds.length > 0" v-model="form.breed" class="bcv-select">
+                                    <option value="">{{ L.breedSelect }}</option>
+                                    <option v-for="b in breeds" :key="b.id"
+                                        :value="locale === 'ar' ? (b.name_ar || b.name_en) : (b.name_en || b.name_ar)">
+                                        {{ locale === 'ar' ? (b.name_ar || b.name_en) : (b.name_en || b.name_ar) }}
+                                    </option>
+                                </select>
+                                <input v-else v-model="form.breed" class="bcv-input" :placeholder="L.breedPh" />
                             </div>
-
+                            
                             <!-- Color -->
                             <div class="bcv-field bcv-f-md">
                                 <label class="bcv-label">{{ L.color }}</label>

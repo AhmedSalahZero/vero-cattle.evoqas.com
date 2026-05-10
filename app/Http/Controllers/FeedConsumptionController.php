@@ -132,9 +132,8 @@ class FeedConsumptionController extends Controller
         // ── Step 2: Authorize lot + resolve companyId ─────────────
         $this->authorizeLot($authUser, $request->lot_id);
         $lot       = Lot::with('farm')->findOrFail($request->lot_id);
-        $companyId = $authUser->is_super_admin
-            ? $lot->farm->company_id
-            : $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
         $lotId     = (int) $request->lot_id;
 
         // ── Step 3: Derive head_count + validate animal ownership ─
@@ -170,8 +169,25 @@ class FeedConsumptionController extends Controller
             ],
             'rows.*.location_id' => [
                 'required',
-                Rule::exists('inventory_locations', 'id')
-                    ->where('company_id', $companyId),
+                // Validate via join — inventory_locations may belong to the company
+                // directly (company_id) OR via farm (farm_id → farms.company_id).
+                // Using a plain exists scoped to company_id alone rejects farm-level
+                // locations whose company_id column is NULL or set on the farm row.
+                function (string $attribute, mixed $value, \Closure $fail) use ($companyId) {
+                    $exists = DB::table('inventory_locations as il')
+                        ->leftJoin('farms as f', 'f.id', '=', 'il.farm_id')
+                        ->where('il.id', $value)
+                        ->where('il.is_active', true)
+                        ->where(function ($q) use ($companyId) {
+                            $q->where('il.company_id', $companyId)
+                              ->orWhere('f.company_id', $companyId);
+                        })
+                        ->exists();
+
+                    if (!$exists) {
+                        $fail(__('validation.exists', ['attribute' => 'location']));
+                    }
+                },
             ],
             'rows.*.qty_kg' => 'required|numeric|min:0.001',
         ]);

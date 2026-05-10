@@ -5,6 +5,29 @@ import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
+import { useLocale } from '@/Composables/useLocale';
+
+const { t } = useLocale();
+const tx = {
+    en: {
+        title: 'Register',
+        name: 'Name',
+        email: 'Email',
+        password: 'Password',
+        confirmPassword: 'Confirm Password',
+        alreadyRegistered: 'Already registered?',
+        register: 'Register',
+    },
+    ar: {
+        title: 'إنشاء حساب',
+        name: 'الاسم',
+        email: 'البريد الإلكتروني',
+        password: 'كلمة المرور',
+        confirmPassword: 'تأكيد كلمة المرور',
+        alreadyRegistered: 'لديك حساب بالفعل؟',
+        register: 'إنشاء حساب',
+    },
+};
 
 const form = useForm({
     name: '',
@@ -22,11 +45,11 @@ const submit = () => {
 
 <template>
     <GuestLayout>
-        <Head title="Register" />
+        <Head :title="t(tx, '').title" />
 
         <form @submit.prevent="submit">
             <div>
-                <InputLabel for="name" value="Name" />
+                <InputLabel for="name" :value="t(tx, '').name" />
 
                 <TextInput
                     id="name"
@@ -42,7 +65,7 @@ const submit = () => {
             </div>
 
             <div class="mt-4">
-                <InputLabel for="email" value="Email" />
+                <InputLabel for="email" :value="t(tx, '').email" />
 
                 <TextInput
                     id="email"
@@ -57,7 +80,7 @@ const submit = () => {
             </div>
 
             <div class="mt-4">
-                <InputLabel for="password" value="Password" />
+                <InputLabel for="password" :value="t(tx, '').password" />
 
                 <TextInput
                     id="password"
@@ -74,7 +97,7 @@ const submit = () => {
             <div class="mt-4">
                 <InputLabel
                     for="password_confirmation"
-                    value="Confirm Password"
+                    :value="t(tx, '').confirmPassword"
                 />
 
                 <TextInput
@@ -97,7 +120,7 @@ const submit = () => {
                     :href="route('login')"
                     class="rounded-md text-sm text-gray-600 underline hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:text-gray-400 dark:hover:text-gray-100 dark:focus:ring-offset-gray-800"
                 >
-                    Already registered?
+                    {{ t(tx, '').alreadyRegistered }}
                 </Link>
 
                 <PrimaryButton
@@ -105,7 +128,7 @@ const submit = () => {
                     :class="{ 'opacity-25': form.processing }"
                     :disabled="form.processing"
                 >
-                    Register
+                    {{ t(tx, '').register }}
                 </PrimaryButton>
             </div>
         </form>

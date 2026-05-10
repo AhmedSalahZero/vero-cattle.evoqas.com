@@ -113,11 +113,10 @@ class FixedAssetController extends Controller
             $this->authorizeFarm($authUser, $validated['farm_id']);
         }
 
-        $companyId = $authUser->is_super_admin
-            ? ($validated['farm_id']
-                ? Farm::find($validated['farm_id'])->company_id
-                : $request->input('company_id'))
-            : $authUser->company_id;
+        // §6.5 — session-based company resolution for Super Admin.
+        // If a farm is linked, derive from farm (authoritative).
+        // Otherwise use session selected_company_id.
+        $companyId = $this->resolveCompanyId($request);
 
         // Land never depreciates — enforce server-side regardless of form input
         if (($validated['category'] ?? '') === 'land') {
@@ -837,10 +836,12 @@ class FixedAssetController extends Controller
                 $reversal = JournalEntry::create([
                     'company_id'     => $asset->company_id,
                     'fiscal_year_id' => $fiscalYear->id,
-                    'date'           => now()->toDateString(),
+                    'date'           => $asset->purchase_date instanceof \Carbon\Carbon
+                                            ? $asset->purchase_date->toDateString()
+                                            : $asset->purchase_date,
                     'reference'      => 'REV-FA-' . $asset->asset_code,
                     'description'    => 'Reversal of purchase JE: ' . ($asset->name_en ?? $asset->name_ar) . ' — payment account correction',
-                    'period'         => (int) now()->format('n'),
+                    'period'         => (int) \Carbon\Carbon::parse($asset->purchase_date)->format('n'),
                     'status'         => 'posted',
                     'source_type'    => FixedAsset::class,
                     'source_id'      => $asset->id,
@@ -868,10 +869,12 @@ class FixedAssetController extends Controller
         $je = JournalEntry::create([
             'company_id'     => $asset->company_id,
             'fiscal_year_id' => $fiscalYear->id,
-            'date'           => now()->toDateString(),
+            'date'           => $asset->purchase_date instanceof \Carbon\Carbon
+                                    ? $asset->purchase_date->toDateString()
+                                    : $asset->purchase_date,
             'reference'      => 'FA-' . $asset->asset_code . '-ADJ',
             'description'    => 'Purchase JE correction: ' . ($asset->name_en ?? $asset->name_ar),
-            'period'         => (int) now()->format('n'),
+            'period'         => (int) \Carbon\Carbon::parse($asset->purchase_date)->format('n'),
             'status'         => 'posted',
             'source_type'    => FixedAsset::class,
             'source_id'      => $asset->id,

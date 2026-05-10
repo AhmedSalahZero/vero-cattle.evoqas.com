@@ -107,10 +107,17 @@ class HandleInertiaRequests extends Middleware
                 ] : null,
             ],
 
-            'flash' => [
+           'flash' => [
                 'success' => $request->session()->get('success'),
                 'error'   => $request->session()->get('error'),
             ],
+
+            'selected_company' => $request->session()->get('selected_company_id')
+                ? \App\Models\Company::find(
+                    $request->session()->get('selected_company_id'),
+                    ['id', 'name_en', 'name_ar']
+                )
+                : null,
         ];
     }
 }

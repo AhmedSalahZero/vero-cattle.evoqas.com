@@ -37,7 +37,7 @@ class BankStatementController extends Controller
     public function index(Request $request)
     {
         $authUser  = Auth::user();
-        $companyId = $this->resolveCompanyId($authUser, $request);
+        $companyId = $this->resolveBankCompanyId($authUser, $request);
 
         abort_unless(
             $authUser->is_super_admin ||
@@ -79,7 +79,7 @@ class BankStatementController extends Controller
     public function store(Request $request)
     {
         $authUser  = Auth::user();
-        $companyId = $this->resolveCompanyId($authUser, $request, true);
+        $companyId = $this->resolveBankCompanyId($authUser, $request, true);
 
         abort_unless(
             $authUser->is_super_admin ||
@@ -333,10 +333,11 @@ class BankStatementController extends Controller
      * Super Admin: reads from request (required when $mustExist = true).
      * Regular user: always from auth user record — never from request.
      */
-    private function resolveCompanyId($authUser, Request $request, bool $mustExist = false): ?int
+    private function resolveBankCompanyId($authUser, Request $request, bool $mustExist = false): ?int
     {
         if ($authUser->is_super_admin) {
-            $id = (int) $request->input('company_id', 0);
+            // §6.5 — session-based company resolution for Super Admin
+            $id = (int) $request->session()->get('selected_company_id', 0);
             if ($mustExist) {
                 abort_unless($id > 0, 422, __('messages.company_required_for_super_admin'));
             }

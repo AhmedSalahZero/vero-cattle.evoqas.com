@@ -13,26 +13,27 @@ use Illuminate\Support\Facades\DB;
 //  BUG 1 — `inventory_ledger` does not exist.
 //    Was: DB::table('inventory_ledger as il')
 //    Fix: DB::table('inventory_transactions as it')
-//         The real table is inventory_transactions with
-//         type enum('receipt','consumption','adjustment',
-//                   'transfer_in','transfer_out')
 //
 //  BUG 2 — Unnecessary raw math on a pre-calculated column.
 //    Was: ->sum(DB::raw('il.qty * il.unit_cost'))
 //    Fix: ->sum('it.total')
-//         inventory_transactions already stores total = qty × unit_cost
 //
 //  BUG 3 — `treatment_cost` column does not exist on health_records.
 //    Was: ->sum('treatment_cost')
 //    Fix: ->sum('cost')
-//         health_records schema column is: cost decimal(12,2)
 //
 //  BUG 4 — `withdrawal_days` column does not exist on health_records.
 //    Was: ->whereRaw('DATE_ADD(hr.date, INTERVAL hr.withdrawal_days DAY) >= ?')
-//         ->whereRaw('hr.withdrawal_days > 0')
 //    Fix: ->whereNotNull('hr.withdrawal_clear_date')
 //         ->whereDate('hr.withdrawal_clear_date', '>=', $today)
-//         health_records schema column is: withdrawal_clear_date date NULL
+//
+//  RENAME (Session 65d):
+//    target_slaughter_date → target_sale_date
+//    Alert key: slaughter_due_30d → lots_due_for_sale_30d
+//    Business meaning: VERO is a buy-fatten-sell-live operation.
+//    The date on a lot is the planned LIVE SALE date, not a slaughter
+//    target. This alert warns the farm manager that a batch is
+//    approaching its planned sale date within the next 30 days.
 //
 //  KPIs exposed:
 //    Operational: active head count, avg ADG, feed cost MTD,
@@ -40,7 +41,7 @@ use Illuminate\Support\Facades\DB;
 //    Financial:   revenue MTD/YTD, gross margin % MTD/YTD,
 //                 outstanding payables, outstanding receivables,
 //                 overdue payables
-//    Alerts:      animals due for slaughter ≤30 days,
+//    Alerts:      lots approaching planned sale date ≤30 days,
 //                 vaccinations due ≤7 days, quarantine count,
 //                 withdrawal pending, overdue AP invoices
 // ══════════════════════════════════════════════════════════════════
@@ -108,41 +109,39 @@ class DashboardService
             )', [$companyId])
             ->avg('wr.adg_kg');
 
-        // ── FIX BUG 1 & 2 ─────────────────────────────────────────
-        // Feed cost MTD — sourced from inventory_transactions (not inventory_ledger)
-        // type = 'consumption' covers feed items drawn from inventory.
-        // Uses pre-calculated `total` column (= qty × unit_cost stored at write time).
+        // Feed cost MTD — from inventory_transactions type = 'consumption'
+        // Column is `date` (not `transaction_date`) per schema.
+        // No join needed — consumption transactions are feed draws by definition.
         $feedCostMtd = DB::table('inventory_transactions as it')
             ->where('it.company_id', $companyId)
             ->when($farmId, fn($q) => $q->where('it.farm_id', $farmId))
             ->where('it.type', 'consumption')
             ->whereBetween('it.date', [$mtdStart, $today])
-            ->sum('it.total'); // BUG FIX: was sum(DB::raw('il.qty * il.unit_cost'))
+            ->sum('it.total');
 
-        // ── FIX BUG 3 ─────────────────────────────────────────────
-        // Vet cost MTD — health_records column is `cost`, not `treatment_cost`
+        // Vet cost MTD — from health_records
         $vetCostMtd = $scope('health_records')
-            ->whereBetween('date', [$mtdStart, $today])
-            ->sum('cost'); // BUG FIX: was sum('treatment_cost')
-
-        // Vaccination cost MTD — vaccination_records.cost is correct per schema
-        $vaccCostMtd = $scope('vaccination_records')
-            ->whereBetween('date', [$mtdStart, $today])
+            ->whereDate('date', '>=', $mtdStart)
             ->sum('cost');
 
-        // Mortality count MTD
+        // Vaccination cost MTD — from vaccination_records
+        $vaccinationCostMtd = $scope('vaccination_records')
+            ->whereDate('date', '>=', $mtdStart)
+            ->sum('cost');
+
+        // Mortality MTD — animals that died (status = 'dead') this month
         $mortalityMtd = $scope('animals')
             ->where('status', 'dead')
-            ->whereBetween('status_date', [$mtdStart, $today])
+            ->whereDate('updated_at', '>=', $mtdStart)
             ->count();
 
         return [
-            'active_head_count'    => $activeHead,
+            'active_head'          => $activeHead,
             'active_lots'          => $activeLots,
-            'avg_adg_kg_day'       => $avgAdg ? round((float) $avgAdg, 3) : null,
-            'feed_cost_mtd'        => round((float) $feedCostMtd, 2),
-            'vet_cost_mtd'         => round((float) $vetCostMtd,  2),
-            'vaccination_cost_mtd' => round((float) $vaccCostMtd, 2),
+            'avg_adg_kg'           => $avgAdg ? round((float) $avgAdg, 3) : null,
+            'feed_cost_mtd'        => round((float) $feedCostMtd,        2),
+            'vet_cost_mtd'         => round((float) $vetCostMtd,         2),
+            'vaccination_cost_mtd' => round((float) $vaccinationCostMtd, 2),
             'mortality_mtd'        => $mortalityMtd,
         ];
     }
@@ -156,36 +155,37 @@ class DashboardService
         string $ytdStart,
         string $today
     ): array {
-        // Revenue MTD and YTD from confirmed/paid sales_records
+        // Revenue MTD / YTD from confirmed sales
+        // Column is `date` (not `sale_date`) per schema — sales_records.date
         $revenueMtd = DB::table('sales_records')
             ->where('company_id', $companyId)
-            ->whereIn('status', ['confirmed', 'partially_paid', 'paid'])
-            ->whereBetween('date', [$mtdStart, $today])
+            ->where('status', 'confirmed')
+            ->whereDate('date', '>=', $mtdStart)
             ->sum('total_amount');
 
         $revenueYtd = DB::table('sales_records')
             ->where('company_id', $companyId)
-            ->whereIn('status', ['confirmed', 'partially_paid', 'paid'])
-            ->whereBetween('date', [$ytdStart, $today])
+            ->where('status', 'confirmed')
+            ->whereDate('date', '>=', $ytdStart)
             ->sum('total_amount');
 
-        // P&L for MTD/YTD gross margin %
+        // P&L for gross margin
         $plMtd = $this->financial->profitAndLoss($companyId, $mtdStart, $today);
         $plYtd = $this->financial->profitAndLoss($companyId, $ytdStart, $today);
 
-        // Outstanding payables (open + partially_paid + overdue AP invoices)
+        // Outstanding payables
         $outstandingPayables = DB::table('ap_invoices')
             ->where('company_id', $companyId)
             ->whereIn('status', ['open', 'partially_paid', 'overdue'])
             ->sum('balance');
 
-        // Outstanding receivables (open + partially_paid + overdue AR invoices)
+        // Outstanding receivables
         $outstandingReceivables = DB::table('ar_invoices')
             ->where('company_id', $companyId)
             ->whereIn('status', ['open', 'partially_paid', 'overdue'])
             ->sum('balance');
 
-        // Overdue payables (due_date < today)
+        // Overdue payables
         $overduePayables = DB::table('ap_invoices')
             ->where('company_id', $companyId)
             ->whereIn('status', ['open', 'partially_paid', 'overdue'])
@@ -217,14 +217,18 @@ class DashboardService
         $thirtyDaysOut = Carbon::parse($today)->addDays(30)->toDateString();
         $sevenDaysOut  = Carbon::parse($today)->addDays(7)->toDateString();
 
-        // Animals due for slaughter: active animals in lots with target_slaughter_date set
-        $slaughterDue = DB::table('animals as a')
+        // Lots approaching planned live sale date within 30 days.
+        // VERO is a buy-fatten-sell-live operation. target_sale_date on a lot
+        // is the planned date the fattened batch will be ready for live sale —
+        // this alert gives farm managers 30-day advance warning to arrange
+        // buyer contacts, transport, and weighing logistics.
+        $lotsDueForSale = DB::table('animals as a')
             ->join('lots as l', 'l.id', '=', 'a.lot_id')
             ->where('a.company_id', $companyId)
             ->when($farmId, fn($q) => $q->where('a.farm_id', $farmId))
             ->where('a.status', 'active')
-            ->whereNotNull('l.target_slaughter_date')
-            ->whereBetween('l.target_slaughter_date', [$today, $thirtyDaysOut])
+            ->whereNotNull('l.target_sale_date')
+            ->whereBetween('l.target_sale_date', [$today, $thirtyDaysOut])
             ->count();
 
         // Vaccinations due in next 7 days
@@ -238,18 +242,15 @@ class DashboardService
             ->where('status', 'quarantine')
             ->count();
 
-        // ── FIX BUG 4 ─────────────────────────────────────────────
-        // Animals with active withdrawal period.
+        // Animals with active medicine withdrawal period.
         // health_records has `withdrawal_clear_date` (date), NOT `withdrawal_days`.
-        // Filter: withdrawal_clear_date is set and is today or in the future,
-        //         meaning the withdrawal window has not yet passed.
         $withdrawalPending = DB::table('health_records as hr')
             ->join('animals as a', 'a.id', '=', 'hr.animal_id')
             ->where('hr.company_id', $companyId)
             ->when($farmId, fn($q) => $q->where('hr.farm_id', $farmId))
             ->where('a.status', 'active')
-            ->whereNotNull('hr.withdrawal_clear_date')                     // BUG FIX: was withdrawal_days > 0
-            ->whereDate('hr.withdrawal_clear_date', '>=', $today)          // BUG FIX: was DATE_ADD(date, INTERVAL withdrawal_days DAY)
+            ->whereNotNull('hr.withdrawal_clear_date')
+            ->whereDate('hr.withdrawal_clear_date', '>=', $today)
             ->whereNull('a.deleted_at')
             ->count();
 
@@ -260,7 +261,7 @@ class DashboardService
             ->count();
 
         return [
-            'slaughter_due_30d'     => $slaughterDue,
+            'lots_due_for_sale_30d' => $lotsDueForSale,   // renamed from slaughter_due_30d
             'vaccinations_due_7d'   => $vaccinationsDue,
             'animals_in_quarantine' => $inQuarantine,
             'withdrawal_pending'    => $withdrawalPending,
@@ -269,7 +270,7 @@ class DashboardService
     }
 
     // ──────────────────────────────────────────────────────────────
-    // CHART DATA — time-series arrays for frontend charts
+    // CHART DATA
     // ──────────────────────────────────────────────────────────────
     private function chartData(
         int    $companyId,
@@ -277,59 +278,66 @@ class DashboardService
         string $ytdStart,
         string $today
     ): array {
-        // Monthly revenue vs COGS for the current year
-        $monthlyPL = $this->monthlyPLSeries($companyId, $ytdStart, $today);
+        // Monthly revenue — last 12 months
+        // Column is `date` (not `sale_date`) per schema
+        $revenueByMonth = DB::table('sales_records')
+            ->where('company_id', $companyId)
+            ->where('status', 'confirmed')
+            ->whereDate('date', '>=', $ytdStart)
+            ->selectRaw('DATE_FORMAT(date, "%Y-%m") as month, SUM(total_amount) as total')
+            ->groupBy('month')
+            ->orderBy('month')
+            ->get()
+            ->map(fn($r) => ['month' => $r->month, 'total' => round((float) $r->total, 2)])
+            ->toArray();
 
-        // Head count by lot (for pie/bar chart)
-        $headByLot = DB::table('animals as a')
-            ->join('lots as l', 'l.id', '=', 'a.lot_id')
-            ->where('a.company_id', $companyId)
-            ->when($farmId, fn($q) => $q->where('a.farm_id', $farmId))
-            ->where('a.status', 'active')
-            ->whereNull('a.deleted_at')
-            ->groupBy('l.id', 'l.name')
-            ->select('l.id', 'l.name', DB::raw('COUNT(a.id) as head_count'))
-            ->get();
+        // Head count by breed
+        $headByBreed = DB::table('animals')
+            ->where('company_id', $companyId)
+            ->when($farmId, fn($q) => $q->where('farm_id', $farmId))
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->selectRaw('breed, COUNT(*) as count')
+            ->groupBy('breed')
+            ->orderByDesc('count')
+            ->get()
+            ->map(fn($r) => ['breed' => $r->breed, 'count' => $r->count])
+            ->toArray();
+
+        // Feed cost vs vet cost — last 6 months
+        // Column is `date` (not `transaction_date`) per schema.
+        $feedVsVet = DB::table('inventory_transactions as it')
+            ->where('it.company_id', $companyId)
+            ->when($farmId, fn($q) => $q->where('it.farm_id', $farmId))
+            ->where('it.type', 'consumption')
+            ->whereDate('it.date', '>=', Carbon::parse($today)->subMonths(6)->toDateString())
+            ->selectRaw('DATE_FORMAT(it.date, "%Y-%m") as month, SUM(it.total) as feed_cost')
+            ->groupBy('month')
+            ->orderBy('month')
+            ->get()
+            ->keyBy('month');
+
+        $vetByMonth = DB::table('health_records')
+            ->where('company_id', $companyId)
+            ->when($farmId, fn($q) => $q->where('farm_id', $farmId))
+            ->whereDate('date', '>=', Carbon::parse($today)->subMonths(6)->toDateString())
+            ->selectRaw('DATE_FORMAT(date, "%Y-%m") as month, SUM(cost) as vet_cost')
+            ->groupBy('month')
+            ->orderBy('month')
+            ->get()
+            ->keyBy('month');
+
+        $allMonths = collect($feedVsVet->keys())->merge($vetByMonth->keys())->unique()->sort()->values();
+        $costTrend = $allMonths->map(fn($m) => [
+            'month'     => $m,
+            'feed_cost' => round((float) ($feedVsVet[$m]->feed_cost ?? 0), 2),
+            'vet_cost'  => round((float) ($vetByMonth[$m]->vet_cost  ?? 0), 2),
+        ])->values()->toArray();
 
         return [
-            'monthly_revenue_cogs' => $monthlyPL,
-            'head_count_by_lot'    => $headByLot,
+            'revenue_by_month' => $revenueByMonth,
+            'head_by_breed'    => $headByBreed,
+            'cost_trend'       => $costTrend,
         ];
-    }
-
-    private function monthlyPLSeries(
-        int    $companyId,
-        string $ytdStart,
-        string $today
-    ): array {
-        $months = [];
-        $cursor = Carbon::parse($ytdStart)->startOfMonth();
-        $end    = Carbon::parse($today);
-
-        while ($cursor->lte($end)) {
-            $from = $cursor->copy()->startOfMonth()->toDateString();
-            $to   = $cursor->copy()->endOfMonth()->toDateString();
-
-            // Cap to today for the current month
-            if ($cursor->isSameMonth($end)) {
-                $to = $today;
-            }
-
-            $pl = $this->financial->profitAndLoss($companyId, $from, $to);
-
-            $months[] = [
-                'month'            => $cursor->format('Y-m'),
-                'label'            => $cursor->format('M Y'),
-                'revenue'          => $pl['current']['total_revenue'],
-                'cogs'             => $pl['current']['total_cogs'],
-                'gross_profit'     => $pl['current']['gross_profit'],
-                'gross_margin_pct' => $pl['current']['gross_margin_pct'],
-                'net_income'       => $pl['current']['net_income'],
-            ];
-
-            $cursor->addMonth();
-        }
-
-        return $months;
     }
 }

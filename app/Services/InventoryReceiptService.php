@@ -122,11 +122,11 @@ class InventoryReceiptService
                 ->whereDate('end_date',   '>=', $receiptDate)
                 ->first();
 
-            abort_unless(
-                $fiscalYear !== null,
-                422,
-                "No open fiscal year covers {$receiptDate}. Open or create a fiscal year before receiving goods."
-            );
+            if ($fiscalYear === null) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'batch_date' => "No open fiscal year covers {$receiptDate}. Please change the receipt date or open a fiscal year that covers this date.",
+                ]);
+            }
 
             // ── STEP 3: Process each item line ────────────────────
             $batchSubtotal  = '0';       // bcmath accumulator
@@ -158,28 +158,58 @@ class InventoryReceiptService
                     "Quantity received must be greater than zero for item line #{$itemLine->id}."
                 );
 
-                // ── 3b: Lock location stock row ───────────────────
-                // item_id on the stock row = location-specific InventoryItem row (is_master=false)
-                $stockRow = InventoryItem::lockForUpdate()
-                    ->where('master_item_id', $itemLine->inventory_item_id)
-                    ->where('location_id', $locationId)
-                    ->where('is_master', false)
+                // ── 3b: Load master item (needed for auto-create and account routing)
+                $masterItem = InventoryItem::lockForUpdate()
+                    ->where('id', $itemLine->inventory_item_id)
+                    ->where('is_master', true)
                     ->first();
-
-                abort_unless(
-                    $stockRow !== null,
-                    422,
-                    "Stock row not found for item #{$itemLine->inventory_item_id} at location #{$locationId}. Contact your administrator."
-                );
-
-                // Load master item to get category for account routing
-                $masterItem = InventoryItem::find($itemLine->inventory_item_id);
 
                 abort_unless(
                     $masterItem !== null,
                     422,
                     "Master inventory item #{$itemLine->inventory_item_id} not found."
                 );
+
+                // ── 3b: Resolve location stock row — auto-create if first receipt ──
+                // When goods are received at a location for the first time, no
+                // location-stock row exists yet. We create it on the fly (qty=0,
+                // unit_cost=0) so the WAC calculation starts from a clean slate.
+                // The lockForUpdate on the SELECT prevents race conditions on the
+                // first-ever receipt, but firstOrCreate is still safe inside the
+                // outer DB::transaction.
+                $stockRow = InventoryItem::where('master_item_id', $masterItem->id)
+                    ->where('location_id', $locationId)
+                    ->where('is_master', false)
+                    ->first();
+
+                if ($stockRow === null) {
+                    $location = \App\Models\InventoryLocation::findOrFail($locationId);
+
+                    // company_id always comes from the PO — it is the single
+                    // authoritative source set at PO creation time via resolveCompanyId().
+                    $stockCompanyId = $po->company_id;
+
+                    $stockRow = InventoryItem::create([
+                        'company_id'     => $stockCompanyId,
+                        'farm_id'        => $location->farm_id,
+                        'master_item_id' => $masterItem->id,
+                        'location_id'    => $locationId,
+                        'is_master'      => false,
+                        'name_en'        => $masterItem->name_en,
+                        'name_ar'        => $masterItem->name_ar,
+                        'sku'            => $masterItem->sku,
+                        'category'       => $masterItem->category,
+                        'unit'           => $masterItem->unit,
+                        'unit_cost'      => 0,
+                        'qty_on_hand'    => 0,
+                        'reorder_point'  => $masterItem->reorder_point ?? 0,
+                        'feed_item_id'   => $masterItem->feed_item_id,
+                        'is_active'      => true,
+                    ]);
+                }
+
+                // Now lock the row for the WAC update
+                $stockRow = InventoryItem::lockForUpdate()->findOrFail($stockRow->id);
 
                 // ── 3c: Capture pre-receipt values ────────────────
                 // CRITICAL: capture BEFORE any write — never use refresh() after

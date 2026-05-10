@@ -84,7 +84,8 @@
                                         <span class="coa-name">{{ n(a, 'name') }}</span>
                                         <span class="coa-amount-blue">{{ formatAmount(a.balance ?? 0) }}</span>
                                         <div class="coa-row-actions">
-                                            <button class="cv-action-btn cv-action-btn-amber" @click="openEditPanel(a)">
+                                            <!-- System WIP account (1310) is not editable — hide edit button -->
+                                            <button v-if="!a.is_system" class="cv-action-btn cv-action-btn-amber" @click="openEditPanel(a)">
                                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                             </button>
                                         </div>
@@ -153,6 +154,8 @@
 
                         <CoaSection :title="t({ en: 'OPERATING EXPENSES', ar: 'المصروفات التشغيلية' })" color="red" :total="totalExpenses" :total-label="t({ en: 'Total Expenses', ar: 'إجمالي المصروفات' })">
                             <CoaGroup :title="t({ en: 'Expense Accounts', ar: 'حسابات المصروفات' })" header-code="6000" :accounts="accounts" :is-rtl="isRtl" @add="openAddPanel" @edit="openEditPanel" @toggle="toggleActive" @delete="confirmDelete"/>
+                            <!-- Fix 4 Session 65c: G&A Expenses group added to seeder -->
+                            <CoaGroup :title="t({ en: 'General & Administrative Expenses', ar: 'المصروفات العمومية والإدارية' })" header-code="6900" :accounts="accounts" :is-rtl="isRtl" @add="openAddPanel" @edit="openEditPanel" @toggle="toggleActive" @delete="confirmDelete"/>
                         </CoaSection>
 
                         <div class="coa-net-income" :class="netIncome >= 0 ? 'coa-net-income-profit' : 'coa-net-income-loss'">
@@ -225,7 +228,8 @@
                             <button class="cv-action-btn" @click="openAddPanel(acc)" :title="t({ en: 'Add Sub-account', ar: 'إضافة حساب فرعي' })">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                             </button>
-                            <button class="cv-action-btn cv-action-btn-amber" @click="openEditPanel(acc)">
+                            <!-- System accounts are not editable — hide edit button -->
+                            <button v-if="!acc.is_system" class="cv-action-btn cv-action-btn-amber" @click="openEditPanel(acc)">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                             </button>
                             <button class="cv-action-btn" :class="acc.is_active ? 'cv-action-btn-amber' : ''" @click="toggleActive(acc)">
@@ -825,6 +829,15 @@ function onCodeInput() {
     }
 }
 
+// ── significantPrefix ──────────────────────────────────────────────
+// Strips trailing zeros from a parent account code so only the
+// meaningful digits are shown as locked in the sub-account panel.
+// Examples: '1100' → '11', '1110' → '111', '6000' → '6', '6900' → '69'
+// Must match the identical function in CoaGroup.vue (Fix 2+3 Session 65c).
+function significantPrefix(code) {
+    return String(code).replace(/0+$/, '') || String(code).charAt(0)
+}
+
 function openAddPanel(ctx) {
     form.value         = emptyForm()
     parentSearch.value = ''
@@ -842,11 +855,13 @@ function openAddPanel(ctx) {
         form.value.code                 = suggestCode(ctx.parentId, ctx.codePrefix)
         form.value.code_suffix          = form.value.code.slice(ctx.codePrefix.length)
     } else if (ctx && ctx.id) {
-        // Coming from flat list + button on an account row
+        // Coming from flat list + button on an account row.
+        // FIX 3: use significantPrefix so only meaningful digits are locked in the panel.
+        // e.g. code '1100' → prefix '11', code '1110' → prefix '111'
         panelContext.value = {
             label:          ctx.name_en ?? ctx.name_ar ?? '',
             labelAr:        ctx.name_ar ?? ctx.name_en ?? '',
-            codePrefix:     String(ctx.code),
+            codePrefix:     significantPrefix(String(ctx.code)),
             type:           ctx.type,
             normal_balance: ctx.normal_balance,
             parentId:       ctx.id,

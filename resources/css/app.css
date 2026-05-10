@@ -958,6 +958,7 @@ html, body {
     border-bottom: 1px solid var(--cv-border);
     position: relative;
     overflow: hidden;
+    
 }
 /* Dot grid texture */
 .cv-page-hero::before {

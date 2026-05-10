@@ -67,17 +67,8 @@ class FiscalYearController extends Controller
             403
         );
 
-        $companyId = $authUser->is_super_admin
-            ? $request->input('company_id', $authUser->company_id)
-            : $authUser->company_id;
-
-        // Super admin sends company_id from the Vue selector — validate it
-        if ($authUser->is_super_admin) {
-            $request->validate([
-                'company_id' => 'required|integer|exists:companies,id',
-            ]);
-            $companyId = (int) $request->input('company_id');
-        }
+        // §6.5 — session-based company resolution for Super Admin
+        $companyId = $this->resolveCompanyId($request);
 
         $validated = $request->validate([
             'year'       => [
@@ -87,9 +78,6 @@ class FiscalYearController extends Controller
             'start_date' => 'required|date',
             'end_date'   => 'required|date|after:start_date',
         ]);
-
-        // Hard guard: company_id must never be null — super admin must select a company
-        abort_unless((int)$companyId > 0, 422, 'A company must be selected.');
 
         // Ensure no date overlap with existing years for this company
         $overlap = FiscalYear::where('company_id', $companyId)

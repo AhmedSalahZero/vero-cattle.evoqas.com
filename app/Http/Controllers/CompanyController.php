@@ -36,8 +36,8 @@ class CompanyController extends Controller
             ->get();
 
         return Inertia::render('Companies/Index', [
-            // Pass formatted array so Vue never needs raw Eloquent internals
-            'companies' => $companies->map(fn ($c) => $this->formatCompany($c)),
+            'companies'       => $companies->map(fn ($c) => $this->formatCompany($c)),
+            'activeCompanyId' => (int) session('selected_company_id') ?: null,
         ]);
     }
 
@@ -170,6 +170,35 @@ class CompanyController extends Controller
 
         return redirect()->route('companies.index')
             ->with('success', __('messages.company_deleted'));
+    }
+
+    // ── Enter company context (Super Admin only) ──────────────────
+    //
+    // Stores selected_company_id in the session so all controllers
+    // can resolve company_id without requiring it in every request.
+    // §6.5 Super Admin company_id resolution — session-based pattern.
+    public function enter(Request $request, Company $company)
+    {
+        abort_unless($request->user()->is_super_admin, 403);
+
+        session(['selected_company_id' => $company->id]);
+
+        return redirect()->route('dashboard')
+            ->with('success', 'Entered ' . ($company->name_en ?? $company->name_ar));
+    }
+
+    // ── Exit company context (Super Admin only) ───────────────────
+    //
+    // Clears selected_company_id from session and returns to
+    // Companies index. SA is no longer operating in any company.
+    public function exit(Request $request)
+    {
+        abort_unless($request->user()->is_super_admin, 403);
+
+        session()->forget('selected_company_id');
+
+        return redirect()->route('companies.index')
+            ->with('success', 'Exited company context.');
     }
 
     // ── Toggle active status ──────────────────────────────────────

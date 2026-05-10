@@ -30,10 +30,8 @@ class AccountController extends Controller
             403
         );
 
-        // Resolve company_id (SA can filter by company; regular users see their own)
-        $companyId = $authUser->is_super_admin
-            ? (int) ($request->company_id ?: Company::value('id'))
-            : (int) $authUser->company_id;
+        // Resolve company_id (§6.5 — session-based for Super Admin)
+        $companyId = $this->resolveCompanyId($request);
 
         $query = Account::with('parent:id,code,name_en,name_ar')
             ->withCount('children')
@@ -67,8 +65,46 @@ class AccountController extends Controller
             ->get()
             ->keyBy('account_id');
 
-        $accounts = $query->orderBy('code')->get()
-            ->map(fn($a) => $this->formatAccount($a, $balances));
+        // Build as a plain PHP array keyed by id — Collections are immutable
+        // and cannot be mutated during the rollup pass below.
+        $accounts = [];
+        foreach ($query->orderBy('code')->get() as $a) {
+            $accounts[$a->id] = $this->formatAccount($a, $balances);
+        }
+
+        // ── Parent-id ancestor rollup ─────────────────────────────
+        //
+        // Every account with a non-zero balance walks UP its parent_id chain
+        // and adds its balance to each ancestor. This correctly handles:
+        //
+        //   1110001 (balance 30M, parent→1110, grandparent→1100)
+        //     → adds 30M to 1110  (intermediate seeded leaf)
+        //     → adds 30M to 1100  (group header)
+        //
+        // Code-prefix matching was tried previously and failed because
+        // '1110001'.startsWith('1100') === false — the codes don't share
+        // a prefix in the string sense, they share it via the parent_id tree.
+        //
+        // parent_id IS reliable: the seeder always sets it, and the UI panel
+        // always sets it via the parent picker when creating accounts.
+        // Accounts with parent_id = null are root-level groups (1100, 1200…)
+        // and correctly receive no addition from this loop.
+
+        foreach ($accounts as $accId => $acc) {
+            if (($acc['balance'] ?? 0) == 0) continue; // nothing to propagate
+
+            // Walk up the parent chain, adding this account's balance to every ancestor
+            $parentId = $acc['parent_id'] ?? null;
+            while ($parentId !== null && isset($accounts[$parentId])) {
+                $accounts[$parentId]['balance'] = round(
+                    ($accounts[$parentId]['balance'] ?? 0) + ($acc['balance'] ?? 0),
+                    2
+                );
+                $parentId = $accounts[$parentId]['parent_id'] ?? null;
+            }
+        }
+
+        $accounts = array_values($accounts);
 
         $companies = [];
         if ($authUser->is_super_admin) {
@@ -122,9 +158,7 @@ class AccountController extends Controller
             403
         );
 
-        $companyId = $authUser->is_super_admin
-            ? $request->input('company_id', $authUser->company_id)
-            : $authUser->company_id;
+        $companyId = $this->resolveCompanyId($request);
 
         // RISK-F4 FIX: If a parent account is selected, reconstruct the full
         // code server-side from parent.code + suffix. Never trust the full

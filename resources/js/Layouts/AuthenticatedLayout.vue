@@ -319,32 +319,22 @@ const navGroups = computed(() => {
                            <path d="M10 15h4"/>`,
                 },
                 {
-                    label:     { en: 'Bank Statements', ar: 'كشوف البنك' },
-                    routeName: 'bank-statements.index',
-                    icon: `<path d="M3 22V12"/>
-                           <path d="M21 22V12"/>
-                           <path d="M7 22V12"/>
-                           <path d="M11 22V12"/>
-                           <path d="M15 22V12"/>
-                           <path d="M19 22V12"/>
-                           <path d="M1 12l11-9 11 9"/>
-                           <path d="M1 22h22"/>`,
-                },
-                {
                     label:     { en: 'Farm Cost Allocation', ar: 'تخصيص تكاليف المزرعة' },
                     routeName: 'farm-cost-allocations.index',
                     icon: `<path d="M12 2v20"/>
                         <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
                         <circle cx="12" cy="12" r="2" fill="currentColor"/>`,
                 },
+                
                 {
-                    label:     { en: 'Budget', ar: 'الموازنة التقديرية' },
-                    routeName: 'budgets.index',
-                    icon: `<path d="M12 20V10"/>
-                           <path d="M18 20V4"/>
-                           <path d="M6 20v-4"/>
-                           <path d="M2 14h20" stroke-dasharray="3 3"/>`,
+                    label:     { en: 'FX Rates', ar: 'أسعار الصرف' },
+                    routeName: 'fx-rates.index',
+                    icon: `<path d="M8 3L4 7l4 4"/>
+                        <path d="M4 7h16"/>
+                        <path d="M16 21l4-4-4-4"/>
+                        <path d="M20 17H4"/>`,
                 },
+             
                 {
                     label:     { en: 'Fixed Assets', ar: 'الأصول الثابتة' },
                     routeName: 'fixed-assets.index',
@@ -370,6 +360,15 @@ const navGroups = computed(() => {
                            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                            <path d="M23 21v-2a3 3 0 0 0-2-2.83"/>`,
                 },
+                 {
+                    label:     { en: 'Other Settings', ar: ' إعدادات آخرى' },
+                    routeName: 'settings.index',
+                    icon: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                           <polyline points="14 2 14 8 20 8"/>
+                           <line x1="8" y1="13" x2="16" y2="13"/>
+                           <path d="M8 17h4"/>
+                           <path d="M16 17v-2a2 2 0 0 0-4 0v2"/>`,
+                },
                 {
                     label:     { en: 'Opening Balances', ar: 'الأرصدة الافتتاحية' },
                     routeName: 'opening-balances.index',
@@ -379,23 +378,37 @@ const navGroups = computed(() => {
                            <path d="M8 17h4"/>
                            <path d="M16 17v-2a2 2 0 0 0-4 0v2"/>`,
                 },
-                {
-                    label:     { en: 'FX Rates', ar: 'أسعار الصرف' },
-                    routeName: 'fx-rates.index',
-                    icon: `<path d="M8 3L4 7l4 4"/>
-                        <path d="M4 7h16"/>
-                        <path d="M16 21l4-4-4-4"/>
-                        <path d="M20 17H4"/>`,
-                },
+               
             ],
         },
    
     // ── Reports & Intelligence ───────────────────────────────────
-    {
+    {      
         label: { en: 'Reports', ar: 'التقارير' },
         items: [
             {
-                label:     { en: 'Reports', ar: 'التقارير' },
+                    label:     { en: 'Bank Statements', ar: 'كشوف البنك' },
+                    routeName: 'bank-statements.index',
+                    icon: `<path d="M3 22V12"/>
+                           <path d="M21 22V12"/>
+                           <path d="M7 22V12"/>
+                           <path d="M11 22V12"/>
+                           <path d="M15 22V12"/>
+                           <path d="M19 22V12"/>
+                           <path d="M1 12l11-9 11 9"/>
+                           <path d="M1 22h22"/>`,
+            },
+            {
+                label:     { en: 'Statements', ar: 'كشوف الحساب' },
+                routeName: 'statements.index',
+                icon: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                           <polyline points="14 2 14 8 20 8"/>
+                           <line x1="8" y1="13" x2="16" y2="13"/>
+                           <path d="M8 17h4"/>
+                           <path d="M16 17v-2a2 2 0 0 0-4 0v2"/>`,
+            },
+            {
+                label:     { en: 'Financial Reports', ar: 'التقارير المالية' },
                 routeName: 'reports.index',
                 icon: `<path d="M12 3v18"/>
                     <path d="M5 7l7-4 7 4"/>
@@ -405,13 +418,21 @@ const navGroups = computed(() => {
                     <path d="M17 19h4"/>`,
             },
             {
-                label:     { en: 'Analytics', ar: 'تقارير تحليلية' },
+                label:     { en: 'Analytics Reports', ar: 'التقارير التحليلية ' },
                 routeName: 'analytics.index',
                 icon: `<path d="M18 20V10"/>
                     <path d="M12 20V4"/>
                     <path d="M6 20v-6"/>
                     <path d="M2 20h20"/>
                     <path d="M18 7l-3-3-3 3"/>`,
+            },
+            {
+                    label:     { en: 'Budget', ar: 'الموازنة التقديرية' },
+                    routeName: 'budgets.index',
+                    icon: `<path d="M12 20V10"/>
+                           <path d="M18 20V4"/>
+                           <path d="M6 20v-4"/>
+                           <path d="M2 14h20" stroke-dasharray="3 3"/>`,
             },
         ],
     },
@@ -422,6 +443,18 @@ const navGroups = computed(() => {
     // Items are only included when the logged-in user has the right
     // to access them. This means a Vet never sees Users or Companies.
     const settingsItems = []
+    
+
+    // Farms — Farm Owner and Super Admin
+    if (canManageFarms.value) {
+        settingsItems.push({
+            label:     { en: 'Farms', ar: 'المزارع' },
+            routeName: 'farms.index',
+            // House / farm building icon
+            icon: `<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                   <polyline points="9 22 9 12 15 12 15 22"/>`,
+        })
+    }
 
     // Users — Farm Owner and Super Admin
     if (canManageUsers.value) {
@@ -436,16 +469,7 @@ const navGroups = computed(() => {
         })
     }
 
-    // Farms — Farm Owner and Super Admin
-    if (canManageFarms.value) {
-        settingsItems.push({
-            label:     { en: 'Farms', ar: 'المزارع' },
-            routeName: 'farms.index',
-            // House / farm building icon
-            icon: `<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                   <polyline points="9 22 9 12 15 12 15 22"/>`,
-        })
-    }
+    
 
     // Companies — Super Admin only
     if (canManageCompanies.value) {
@@ -697,6 +721,14 @@ const navGroups = computed(() => {
                         <span class="cv-header-notif-dot" aria-hidden="true"></span>
                     </button>
 
+                    <!-- Active company indicator for Super Admin -->
+                    <div v-if="isSuperAdmin && $page.props.selected_company" class="cv-header-farm-chip" style="background:rgba(29,111,164,0.12);border-color:rgba(29,111,164,0.3);color:#1D6FA4;">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/>
+                        </svg>
+                        <span>{{ isRtl ? ($page.props.selected_company.name_ar ?? $page.props.selected_company.name_en) : ($page.props.selected_company.name_en ?? $page.props.selected_company.name_ar) }}</span>
+                    </div>
+
                     <!-- Farm selector chip (header version) -->
                     <div v-if="currentFarm" class="cv-header-farm-chip">
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -840,7 +872,8 @@ const navGroups = computed(() => {
             </div>
 
             <!-- Page content -->
-            <main class="cv-page">
+            <main>
+                
                 <slot />
             </main>
 
@@ -919,6 +952,18 @@ const navGroups = computed(() => {
     margin: 5px;
     transition: all 0.15s ease;
     transition: background-color 0.15s ease, color 0.15s ease;
+}
+/* Keep the toggle button visible and centered when sidebar is collapsed */
+.cv-sidebar--collapsed .cv-sidebar-collapse-btn {
+    margin-inline-start: 10px;
+    margin-inline-end: 5px;
+    align-self: center;
+    margin:15px
+}
+
+.cv-sidebar--collapsed .cv-sidebar-logo {
+    justify-content: center;
+    padding-inline: 10px;
 }
 @media (min-width: 768px) {
     .cv-sidebar-collapse-btn { display: flex; }

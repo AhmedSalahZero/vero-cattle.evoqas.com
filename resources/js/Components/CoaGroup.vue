@@ -41,7 +41,15 @@
                         :title="isRtl ? 'إضافة حساب فرعي' : 'Add sub-account'">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     </button>
-                    <button class="cv-action-btn cv-action-btn-amber" type="button" @click.stop="$emit('edit', acc)">
+                    <!-- FIX 1: system accounts (marked 'sys') are never editable —
+                         their code, name, type, and normal_balance are part of the
+                         accounting methodology and must not be changed by users. -->
+                    <button
+                        v-if="!acc.is_system"
+                        class="cv-action-btn cv-action-btn-amber"
+                        type="button"
+                        @click.stop="$emit('edit', acc)"
+                    >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     </button>
                     <button
@@ -97,10 +105,35 @@ const children = computed(() => {
         .sort((a, b) => String(a.code).localeCompare(String(b.code)))
 })
 
-// Sum of all direct children balances
-const groupBalance = computed(() =>
-    children.value.reduce((s, a) => s + (a.balance ?? 0), 0)
-)
+// Group balance: use the headerAccount.balance which is already rolled up
+// server-side (AccountController code-prefix rollup) to include ALL descendants
+// regardless of whether they have parent_id set correctly.
+// Do NOT re-sum children here — children only contains direct parent_id matches,
+// which misses user-created accounts that have parent_id = null.
+const groupBalance = computed(() => headerAccount.value?.balance ?? 0)
+
+// ── FIX 2+3: Code prefix helper ──────────────────────────────────────
+//
+// When the user adds a sub-account, the panel shows a locked prefix and
+// a free suffix input. The locked prefix must be only the SIGNIFICANT
+// digits of the parent code — trailing zeros are stripped because they
+// indicate empty placeholder positions, not meaningful digit locks.
+//
+// Examples:
+//   parent '1100' (Fixed Assets group)  → locked '11'   user types '10','20','70'
+//   parent '1110' (Land category)        → locked '111'  user types '5','6'
+//   parent '6000' (Operating Expenses)   → locked '6'    user types '100','200','900'
+//   parent '6320' (Overhead Variance)    → locked '632'  user types '1','2','3'
+//   parent '2270' (Accrued Overheads)    → locked '227'  user types '1','2','3'
+//
+// The full account code is reconstructed server-side as:
+//   parent.code + suffix   (AccountController::store/update)
+// This function only affects how many digits are DISPLAYED as locked in Vue.
+function significantPrefix(code) {
+    // Remove trailing zeros to get the meaningful part of the code.
+    // Keep at least 1 character so root accounts ('1','2','3') still show something.
+    return String(code).replace(/0+$/, '') || String(code).charAt(0)
+}
 
 // Context passed to panel when the repeater button is clicked
 // Uses the actual header account data — code, type, normal_balance, id
@@ -109,7 +142,7 @@ const repeaterContext = computed(() => {
     return {
         label:          headerAccount.value.name_en ?? headerAccount.value.name_ar ?? '',
         labelAr:        headerAccount.value.name_ar ?? headerAccount.value.name_en ?? '',
-        codePrefix:     headerAccount.value.code,
+        codePrefix:     significantPrefix(headerAccount.value.code),
         type:           headerAccount.value.type,
         normal_balance: headerAccount.value.normal_balance,
         parentId:       headerAccount.value.id,
@@ -121,7 +154,7 @@ function buildChildContext(acc) {
     return {
         label:          acc.name_en ?? acc.name_ar ?? '',
         labelAr:        acc.name_ar ?? acc.name_en ?? '',
-        codePrefix:     acc.code,
+        codePrefix:     significantPrefix(acc.code),
         type:           acc.type,
         normal_balance: acc.normal_balance,
         parentId:       acc.id,
