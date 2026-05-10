@@ -121,7 +121,13 @@ class PaymentController extends Controller
             'suppliers'       => $this->availableSuppliers($companyId ?? ($authUser->company_id ?? null)),
             'customers'       => $this->availableCustomers($companyId ?? ($authUser->company_id ?? null)),
             'bankAccounts'    => $this->availableBankAccounts($companyId ?? ($authUser->company_id ?? null)),
-            'expenseAccounts' => $this->availableExpenseAccounts($companyId ?? ($authUser->company_id ?? null)),
+            'expenseAccounts'        => $this->availableExpenseAccounts($companyId ?? ($authUser->company_id ?? null)),
+            'equityPostingAccounts'      => $this->availableEquityPostingAccounts($companyId ?? ($authUser->company_id ?? null)),
+            'liabilityPostingAccounts' => $this->availableLiabilityPostingAccounts($companyId ?? ($authUser->company_id ?? null)),
+            'assetPostingAccounts'    => $this->availableAssetPostingAccounts($companyId ?? ($authUser->company_id ?? null)),
+            'employeeCollectionAccounts1700' => $this->availablePostingAccountsByRootCode($companyId ?? ($authUser->company_id ?? null), '1700'),
+            'otherCreditorAccounts2250'      => $this->availablePostingAccountsByRootCode($companyId ?? ($authUser->company_id ?? null), '2250'),
+            'fiscalYears'             => $this->availableFiscalYears($companyId ?? ($authUser->company_id ?? null)),
             'openApInvoices'  => $this->openApInvoices($companyId ?? ($authUser->company_id ?? null)),
             'openArInvoices'  => $this->openArInvoices($companyId ?? ($authUser->company_id ?? null)),
         ]);
@@ -145,6 +151,7 @@ class PaymentController extends Controller
 
         $this->sanitizePaymentNullables($request);
         $validated = $this->validatePaymentStore($request);
+        $this->assertDateWithinFiscalYears($validated['date'], $companyId);
 
         // 📌 InvoiceForeignCurrencyBalance — EGP rate always 1.0
         if (($validated['currency'] ?? 'EGP') === 'EGP') {
@@ -152,6 +159,7 @@ class PaymentController extends Controller
         }
 
         $this->assertBankNameIfRequired($validated);
+        $this->assertExpenseAccountMatchesCategory($validated, $companyId);
 
         // ── bank_account_id required for ALL methods ──────────────
         // Cash → must be a 14xx safe account
@@ -440,12 +448,18 @@ class PaymentController extends Controller
         abort_unless($companyId > 0, 422, 'company_id required');
 
         return response()->json([
-            'suppliers'       => $this->availableSuppliers($companyId),
-            'customers'       => $this->availableCustomers($companyId),
-            'bankAccounts'    => $this->availableBankAccounts($companyId),
-            'expenseAccounts' => $this->availableExpenseAccounts($companyId),
-            'openApInvoices'  => $this->openApInvoices($companyId),
-            'openArInvoices'  => $this->openArInvoices($companyId),
+            'suppliers'              => $this->availableSuppliers($companyId),
+            'customers'              => $this->availableCustomers($companyId),
+            'bankAccounts'           => $this->availableBankAccounts($companyId),
+            'expenseAccounts'        => $this->availableExpenseAccounts($companyId),
+            'equityPostingAccounts'    => $this->availableEquityPostingAccounts($companyId),
+            'liabilityPostingAccounts' => $this->availableLiabilityPostingAccounts($companyId),
+            'assetPostingAccounts'      => $this->availableAssetPostingAccounts($companyId),
+            'employeeCollectionAccounts1700' => $this->availablePostingAccountsByRootCode($companyId, '1700'),
+            'otherCreditorAccounts2250'      => $this->availablePostingAccountsByRootCode($companyId, '2250'),
+            'fiscalYears'               => $this->availableFiscalYears($companyId),
+            'openApInvoices'         => $this->openApInvoices($companyId),
+            'openArInvoices'         => $this->openArInvoices($companyId),
         ]);
     }
 
@@ -654,7 +668,17 @@ class PaymentController extends Controller
                 'shareholder_collection','shareholder_payment',
                 'expense_payment','other_collection','other_payment',
             ])],
-            'sub_type'            => 'nullable|string|max:50',
+            'sub_type'            => [
+                'nullable',
+                'string',
+                'max:50',
+                Rule::requiredIf(fn () => $request->input('payment_category') === 'shareholder_collection'),
+                Rule::when(
+                    $request->input('payment_category') === 'shareholder_collection',
+                    [Rule::in(['capital_injection', 'shareholder_loan'])],
+                    []
+                ),
+            ],
             'sub_type_comment'    => 'nullable|string|max:255',
             'payee_name'          => 'nullable|string|max:255',
             'date'                => 'required|date',
@@ -667,12 +691,25 @@ class PaymentController extends Controller
             'check_number'        => 'nullable|string|max:50',
             'check_bank'          => 'nullable|string|max:100',
             'check_drawn_on_acct' => 'nullable|string|max:50',
-            'expense_account_id'  => 'nullable|integer|exists:accounts,id',
+            'expense_account_id'  => [
+                'nullable',
+                'integer',
+                'exists:accounts,id',
+                Rule::requiredIf(fn () => in_array($request->input('payment_category'), [
+                    'shareholder_collection', 'employee_collection',
+                    'employee_payment', 'shareholder_payment',
+                ], true)),
+            ],
             'reference'           => 'nullable|string|max:100',
             'notes'               => 'nullable|string|max:1000',
             // Multi-invoice allocations array
-            // Required for customer_collection and supplier_payment
-            'allocations'                       => 'nullable|array|min:1',
+            // Required for categories that settle invoices.
+            'allocations'                       => [
+                'nullable',
+                'array',
+                Rule::requiredIf(fn () => in_array($request->input('payment_category'), ['customer_collection', 'supplier_payment'], true)),
+                'min:1',
+            ],
             'allocations.*.invoice_id'          => 'required|integer',
             'allocations.*.allocated_amount'    => 'required|numeric|min:0.01',
         ]);
@@ -825,6 +862,184 @@ class PaymentController extends Controller
             ->get(['id','code','name_en','name_ar']);
     }
 
+    /** Postable equity accounts (capital, retained earnings, etc.) for shareholder_collection contra. */
+    private function availableEquityPostingAccounts(?int $companyId): \Illuminate\Support\Collection
+    {
+        if (!$companyId) return collect();
+        return Account::where('company_id', $companyId)
+            ->where('allow_direct_posting', true)
+            ->where('is_active', true)
+            ->where('type', 'equity')
+            ->orderBy('code')
+            ->get(['id','code','name_en','name_ar']);
+    }
+
+    /** Postable liability accounts (e.g. due to shareholder) for shareholder_collection + shareholder_loan. */
+    private function availableLiabilityPostingAccounts(?int $companyId): \Illuminate\Support\Collection
+    {
+        if (!$companyId) return collect();
+        return Account::where('company_id', $companyId)
+            ->where('allow_direct_posting', true)
+            ->where('is_active', true)
+            ->where('type', 'liability')
+            ->orderBy('code')
+            ->get(['id','code','name_en','name_ar']);
+    }
+
+    /** Postable asset accounts for employee_collection contra (e.g. custody / employee receivable). */
+    private function availableAssetPostingAccounts(?int $companyId): \Illuminate\Support\Collection
+    {
+        if (!$companyId) return collect();
+        return Account::where('company_id', $companyId)
+            ->where('allow_direct_posting', true)
+            ->where('is_active', true)
+            ->where('type', 'asset')
+            ->orderBy('code')
+            ->get(['id','code','name_en','name_ar']);
+    }
+
+    /** Root account (exact code) plus every active descendant — all selectable like the tree in COA. */
+    private function availablePostingAccountsByRootCode(?int $companyId, string $rootCode): \Illuminate\Support\Collection
+    {
+        if (!$companyId) return collect();
+
+        $all = Account::where('company_id', $companyId)
+            ->get(['id', 'parent_id', 'code', 'name_en', 'name_ar', 'is_active']);
+
+        $rootCodeNorm = trim($rootCode);
+        $root         = $all->first(fn($a) => trim((string) $a->code) === $rootCodeNorm);
+        if (!$root) return collect();
+
+        $descendantIds = [$root->id];
+        $queue         = [$root->id];
+
+        while (!empty($queue)) {
+            $parentId = array_shift($queue);
+            $children = $all->where('parent_id', $parentId)->pluck('id')->all();
+            foreach ($children as $childId) {
+                if (!in_array($childId, $descendantIds, true)) {
+                    $descendantIds[] = $childId;
+                    $queue[]         = $childId;
+                }
+            }
+        }
+
+        return $all
+            ->whereIn('id', $descendantIds)
+            ->filter(fn($a) => (bool) $a->is_active)
+            ->sortBy(fn($a) => trim((string) $a->code))
+            ->values()
+            ->map(fn($a) => [
+                'id'      => $a->id,
+                'code'    => $a->code,
+                'name_en' => $a->name_en,
+                'name_ar' => $a->name_ar,
+            ]);
+    }
+
+    /** All configured fiscal-year ranges for the selected company. */
+    private function availableFiscalYears(?int $companyId): \Illuminate\Support\Collection
+    {
+        if (!$companyId) return collect();
+        return FiscalYear::where('company_id', $companyId)
+            ->orderBy('start_date')
+            ->get(['id', 'year', 'start_date', 'end_date', 'status'])
+            ->map(fn($fy) => [
+                'id'         => $fy->id,
+                'year'       => $fy->year,
+                'start_date' => $fy->start_date?->format('Y-m-d'),
+                'end_date'   => $fy->end_date?->format('Y-m-d'),
+                'status'     => $fy->status,
+            ]);
+    }
+
+    private function assertDateWithinFiscalYears(string $date, int $companyId): void
+    {
+        $exists = FiscalYear::where('company_id', $companyId)
+            ->whereDate('start_date', '<=', $date)
+            ->whereDate('end_date', '>=', $date)
+            ->exists();
+
+        if (!$exists) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'date' => __('The date must be within a configured fiscal year.'),
+            ]);
+        }
+    }
+
+    private function assertExpenseAccountMatchesCategory(array $validated, int $companyId): void
+    {
+        $category = $validated['payment_category'] ?? null;
+
+        $type    = null;
+        $message = null;
+        $rootCode = null;
+
+        if ($category === 'shareholder_collection') {
+            $sub = $validated['sub_type'] ?? null;
+            if ($sub === 'capital_injection') {
+                $type    = 'equity';
+                $message = __('The selected account must be an equity account.');
+            } elseif ($sub === 'shareholder_loan') {
+                $type    = 'liability';
+                $message = __('The selected account must be a liability account.');
+            } else {
+                return;
+            }
+        } elseif ($category === 'employee_collection') {
+            $message  = __('The selected account must be under account 1700.');
+            $rootCode = '1700';
+        } elseif (in_array($category, ['employee_payment', 'shareholder_payment'], true)) {
+            $message  = __('The selected account must be under account 2250.');
+            $rootCode = '2250';
+        } else {
+            return;
+        }
+
+        $id = isset($validated['expense_account_id']) ? (int) $validated['expense_account_id'] : 0;
+        if ($id < 1) {
+            return;
+        }
+        $base = Account::where('id', $id)
+            ->where('company_id', $companyId)
+            ->where('allow_direct_posting', true)
+            ->where('is_active', true);
+
+        $ok = $type
+            ? (clone $base)->where('type', $type)->exists()
+            : ((bool)$rootCode && $this->isAccountUnderRootCode($id, $companyId, $rootCode));
+
+        if (!$ok) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'expense_account_id' => $message,
+            ]);
+        }
+    }
+
+    private function isAccountUnderRootCode(int $accountId, int $companyId, string $rootCode): bool
+    {
+        $rootNorm = trim($rootCode);
+
+        $accounts = Account::where('company_id', $companyId)
+            ->get(['id', 'parent_id', 'code', 'is_active'])
+            ->keyBy('id');
+
+        $start = $accounts->get($accountId);
+        if (!$start || !(bool) $start->is_active) {
+            return false;
+        }
+
+        $cursorId = $accountId;
+        while ($cursorId) {
+            $acc = $accounts->get($cursorId);
+            if (!$acc) break;
+            if (trim((string) $acc->code) === $rootNorm) return true;
+            $cursorId = $acc->parent_id;
+        }
+
+        return false;
+    }
+
     private function openApInvoices(?int $companyId): \Illuminate\Support\Collection
     {
         if (!$companyId) return collect();
@@ -861,6 +1076,16 @@ class PaymentController extends Controller
                 'currency'  => $i->currency,
                 'customer'  => $i->customer?->only(['id','name_en','name_ar']),
             ]);
+    }
+
+    /** Date-only string for API/UI (YYYY-MM-DD). */
+    private function toDateYmd(null|string|\DateTimeInterface $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return \Carbon\Carbon::parse($value)->format('Y-m-d');
     }
 
     /**
@@ -916,7 +1141,7 @@ class PaymentController extends Controller
             'sub_type'                => $p->sub_type,
             'sub_type_comment'        => $p->sub_type_comment,
             'payee_name'              => $p->payee_name,
-            'date'                    => $p->date,
+            'date'                    => $this->toDateYmd($p->date),
             'amount'                  => $p->amount,
             'currency'                => $p->currency ?? 'EGP',
             'exchange_rate'           => $p->exchange_rate ?? 1.0,
@@ -927,10 +1152,10 @@ class PaymentController extends Controller
             'check_bank'              => $p->check_bank,
             'check_drawn_on_acct'     => $p->check_drawn_on_acct,
             'check_status'            => $p->check_status,
-            'check_received_date'     => $p->check_received_date,
-            'check_sent_to_bank_date' => $p->check_sent_to_bank_date,
-            'check_collection_date'   => $p->check_collection_date,
-            'check_rejection_date'    => $p->check_rejection_date,
+            'check_received_date'     => $this->toDateYmd($p->check_received_date),
+            'check_sent_to_bank_date' => $this->toDateYmd($p->check_sent_to_bank_date),
+            'check_collection_date'   => $this->toDateYmd($p->check_collection_date),
+            'check_rejection_date'    => $this->toDateYmd($p->check_rejection_date),
             'recollection_bank_name'  => $p->recollection_bank_name,
             'reference'               => $p->reference,
             'notes'                   => $p->notes,
