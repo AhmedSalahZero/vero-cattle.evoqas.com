@@ -693,6 +693,10 @@ class PaymentController extends Controller
      */
     private function assertSufficientAccountBalance(int $accountId, float $amount, int $companyId): void
     {
+		$moneyType = Request()->input('payment_category');
+		if($moneyType == 'customer_collection' || $moneyType == 'employee_collection' || $moneyType == 'shareholder_collection' || $moneyType == 'other_collection'){
+			return  ;
+		}
         $account = Account::where('id', $accountId)
             ->where('company_id', $companyId)
             ->first(['id', 'code', 'name_en', 'name_ar']);
