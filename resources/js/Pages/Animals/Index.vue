@@ -561,7 +561,7 @@ function goToPage(url) {
                                     <tr>
                                         <th class="cv-th cv-th-num">#</th>
                                         <th class="cv-th cv-th-tag">{{ L.colTag }}</th>
-                                        <th class="cv-th">{{ L.colRfid }}</th>
+                                        <!-- <th class="cv-th">{{ L.colRfid }}</th> -->
                                         <th class="cv-th">{{ L.colSex }}</th>
                                         <th class="cv-th">{{ L.colBreed }}</th>
                                         <th class="cv-th">{{ L.colFarmLot }}</th>
@@ -599,11 +599,13 @@ function goToPage(url) {
                                             </div>
                                         </td>
 
-                                        <!-- RFID -->
+                                        <!-- RFID column hidden by request -->
+                                        <!--
                                         <td class="cv-td cv-td-mono">
                                             <span v-if="animal.rfid" class="cv-rfid-text">{{ animal.rfid }}</span>
                                             <span v-else class="cv-td-empty">—</span>
                                         </td>
+                                        -->
 
                                         <!-- Sex -->
                                         <td class="cv-td">
