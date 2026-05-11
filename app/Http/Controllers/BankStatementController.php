@@ -9,7 +9,12 @@ use App\Models\Company;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Inertia\Inertia;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 // ══════════════════════════════════════════════════════════════════
 //  VERO Cattle Management — Bank Statement Controller
@@ -33,6 +38,8 @@ use Inertia\Inertia;
 
 class BankStatementController extends Controller
 {
+    private const IMPORT_HEADERS = ['date', 'description', 'debit', 'credit', 'balance'];
+
     // ── Index ─────────────────────────────────────────────────────
     public function index(Request $request)
     {
@@ -68,11 +75,153 @@ class BankStatementController extends Controller
             'summary'           => $summary,
             'accounts'          => $this->availableBankAccounts($companyId ?? $authUser->company_id),
             'filters'           => $request->only(['account_id', 'is_reconciled', 'is_matched', 'date_from', 'date_to']),
+            'lastUploadErrors'  => $request->session()->get(
+                $this->uploadErrorsSessionKey($companyId ?? $authUser->company_id),
+                ['errors' => []]
+            ),
             'companies'         => $authUser->is_super_admin
                                     ? Company::orderBy('name_en')->get(['id', 'name_en', 'name_ar'])
                                     : [],
             'selectedCompanyId' => $companyId,
         ]);
+    }
+
+    // ── Download import template ─────────────────────────────────
+    public function downloadTemplate(Request $request)
+    {
+        $authUser = Auth::user();
+        abort_unless(
+            $authUser->is_super_admin ||
+            $authUser->hasPermissionTo('create bank_statements'),
+            403
+        );
+
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $headers = self::IMPORT_HEADERS;
+        foreach ($headers as $index => $header) {
+            $sheet->setCellValueByColumnAndRow($index + 1, 1, $header);
+        }
+
+        $sheet->setCellValue('A2', now()->toDateString());
+        $sheet->setCellValue('B2', 'Sample bank transfer');
+        $sheet->setCellValue('C2', 0);
+        $sheet->setCellValue('D2', 1500.00);
+        $sheet->setCellValue('E2', 1500.00);
+
+        $sheet->setCellValue('A3', now()->toDateString());
+        $sheet->setCellValue('B3', 'Sample supplier payment');
+        $sheet->setCellValue('C3', 375.50);
+        $sheet->setCellValue('D3', 0);
+        $sheet->setCellValue('E3', 1124.50);
+
+        $sheet->getStyle('A1:E1')->getFont()->setBold(true);
+        foreach (range('A', 'E') as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+
+        $writer = new Xlsx($spreadsheet);
+        $filename = 'bank-statements-template.xlsx';
+
+        return response()->streamDownload(function () use ($writer) {
+            $writer->save('php://output');
+        }, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
+    // ── Upload bank statement template ───────────────────────────
+    public function uploadTemplate(Request $request)
+    {
+        $authUser  = Auth::user();
+        $companyId = $this->resolveBankCompanyId($authUser, $request, true);
+
+        abort_unless(
+            $authUser->is_super_admin ||
+            $authUser->hasPermissionTo('create bank_statements'),
+            403
+        );
+
+        $validated = $request->validate([
+            'account_id' => 'required|integer|exists:accounts,id',
+            'file'       => 'required|file|mimes:xlsx,xls,csv|max:10240',
+        ]);
+
+        $account = Account::where('id', $validated['account_id'])
+            ->where('company_id', $companyId)
+            ->whereRaw("LEFT(code,2) IN ('14','15')")
+            ->firstOrFail();
+
+        $rows = IOFactory::load($validated['file']->getRealPath())
+            ->getActiveSheet()
+            ->toArray(null, true, true, true);
+
+        if (empty($rows)) {
+            return back()->with('error', 'Uploaded file is empty.');
+        }
+
+        $headerRow = array_shift($rows);
+        $columnMap = $this->buildTemplateColumnMap($headerRow);
+        $missingHeaders = array_values(array_diff(self::IMPORT_HEADERS, array_values($columnMap)));
+
+        if (!empty($missingHeaders)) {
+            $errors = collect($missingHeaders)->map(fn($header) => [
+                'row'    => 1,
+                'column' => $header,
+                'error'  => "Missing required column: {$header}",
+            ])->all();
+            return $this->failUploadWithErrors($request, $companyId, $errors);
+        }
+
+        $errors = [];
+        $linesToInsert = [];
+        $excelRow = 2;
+        foreach ($rows as $row) {
+            $normalized = $this->normalizeImportedRow($row, $columnMap);
+            if ($this->isRowEmpty($normalized)) {
+                $excelRow++;
+                continue;
+            }
+
+            $rowErrors = $this->validateImportedRow($normalized, $excelRow);
+            if (!empty($rowErrors)) {
+                array_push($errors, ...$rowErrors);
+                $excelRow++;
+                continue;
+            }
+
+            $linesToInsert[] = [
+                'account_id'   => $account->id,
+                'date'         => $normalized['date'],
+                'description'  => $normalized['description'],
+                'amount'       => (float) $normalized['credit'] - (float) $normalized['debit'],
+                'reference'    => null,
+            ];
+            $excelRow++;
+        }
+
+        if (empty($linesToInsert) && empty($errors)) {
+            $errors[] = [
+                'row'    => 2,
+                'column' => 'date',
+                'error'  => 'No valid data rows found in uploaded file.',
+            ];
+        }
+
+        if (!empty($errors)) {
+            return $this->failUploadWithErrors($request, $companyId, $errors);
+        }
+
+        DB::transaction(function () use ($linesToInsert, $companyId) {
+            foreach ($linesToInsert as $line) {
+                $this->createLine($line, $companyId);
+            }
+        });
+
+        $request->session()->forget($this->uploadErrorsSessionKey($companyId));
+
+        return back()->with('success', "Bank statement uploaded successfully ({$this->formatImportCount(count($linesToInsert))} lines).");
     }
 
     // ── Store — add bank statement line(s) ────────────────────────
@@ -344,5 +493,130 @@ class BankStatementController extends Controller
             return $id > 0 ? $id : null;
         }
         return $authUser->company_id;
+    }
+
+    private function uploadErrorsSessionKey(?int $companyId): string
+    {
+        $suffix = $companyId ?: 'global';
+        return "bank_statements_last_upload_errors_{$suffix}";
+    }
+
+    private function buildTemplateColumnMap(array $headerRow): array
+    {
+        $map = [];
+        foreach ($headerRow as $excelColumn => $headerText) {
+            $normalizedHeader = strtolower(trim((string) $headerText));
+            if (in_array($normalizedHeader, self::IMPORT_HEADERS, true)) {
+                $map[$excelColumn] = $normalizedHeader;
+            }
+        }
+        return $map;
+    }
+
+    private function normalizeImportedRow(array $excelRow, array $columnMap): array
+    {
+        $row = [
+            'date'        => null,
+            'description' => null,
+            'debit'       => null,
+            'credit'      => null,
+            'balance'     => null,
+        ];
+
+        foreach ($columnMap as $excelColumn => $fieldName) {
+            $value = $excelRow[$excelColumn] ?? null;
+            $row[$fieldName] = $this->normalizeImportCellValue($value, $fieldName);
+        }
+
+        return $row;
+    }
+
+    private function normalizeImportCellValue($value, string $field)
+    {
+        if ($value === null) return null;
+        if (is_string($value)) {
+            $value = trim($value);
+        }
+        if ($value === '') return null;
+
+        if ($field === 'date') {
+            if (is_numeric($value)) {
+                return ExcelDate::excelToDateTimeObject((float) $value)->format('Y-m-d');
+            }
+            try {
+                return (new \DateTime((string) $value))->format('Y-m-d');
+            } catch (\Throwable $e) {
+                return (string) $value;
+            }
+        }
+
+        if (in_array($field, ['debit', 'credit', 'balance'], true)) {
+            if (is_numeric($value)) return (float) $value;
+            $normalized = str_replace([',', ' '], '', (string) $value);
+            return is_numeric($normalized) ? (float) $normalized : $value;
+        }
+
+        return $value;
+    }
+
+    private function validateImportedRow(array $row, int $excelRow): array
+    {
+        $validator = Validator::make($row, [
+            'date'        => 'required|date',
+            'description' => 'required|string|max:255',
+            'debit'       => 'nullable|numeric|min:0',
+            'credit'      => 'nullable|numeric|min:0',
+            'balance'     => 'required|numeric',
+        ]);
+
+        $validator->after(function ($v) use ($row) {
+            $debit = (float) ($row['debit'] ?? 0);
+            $credit = (float) ($row['credit'] ?? 0);
+            if ($debit <= 0 && $credit <= 0) {
+                $v->errors()->add('debit', 'Either debit or credit must be greater than zero.');
+            }
+            if ($debit > 0 && $credit > 0) {
+                $v->errors()->add('credit', 'Debit and credit cannot both be greater than zero in the same row.');
+            }
+        });
+
+        if (!$validator->fails()) return [];
+
+        $errors = [];
+        foreach ($validator->errors()->messages() as $column => $messages) {
+            foreach ($messages as $message) {
+                $errors[] = [
+                    'row'    => $excelRow,
+                    'column' => $column,
+                    'error'  => $message,
+                ];
+            }
+        }
+        return $errors;
+    }
+
+    private function failUploadWithErrors(Request $request, int $companyId, array $errors)
+    {
+        $payload = [
+            'uploaded_at' => now()->toDateTimeString(),
+            'errors'      => $errors,
+        ];
+        $request->session()->put($this->uploadErrorsSessionKey($companyId), $payload);
+        return back()->with('error', 'Upload failed. Please review Last Upload Errors.');
+    }
+
+    private function isRowEmpty(array $row): bool
+    {
+        foreach ($row as $value) {
+            if ($value !== null && $value !== '') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private function formatImportCount(int $count): string
+    {
+        return number_format($count);
     }
 }

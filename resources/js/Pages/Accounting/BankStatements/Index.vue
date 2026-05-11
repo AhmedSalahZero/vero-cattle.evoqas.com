@@ -15,6 +15,10 @@ const props = defineProps({
 	filters: Object,
 	companies: Array,    // SA only
 	selectedCompanyId: Number,
+	lastUploadErrors: {
+		type: Object,
+		default: () => ({ errors: [] }),
+	},
 })
 
 // ── Locale & Permissions ──────────────────────────────────────────
@@ -36,6 +40,16 @@ const ui = computed(() => lang.value === 'ar' ? {
 	title: 'كشوف الحساب البنكي',
 	subtitle: 'تسجيل ومطابقة حركات الحساب البنكي مع القيود المحاسبية',
 	addBtn: 'إضافة حركة',
+	downloadTemplate: 'تنزيل قالب Excel',
+	uploadTemplate: 'رفع Excel',
+	lastUploadErrorsBtn: 'آخر أخطاء الرفع',
+	uploadAccount: 'الحساب المستهدف للرفع',
+	selectUploadAccount: 'اختر الحساب قبل الرفع',
+	uploadErrorsTitle: 'أخطاء آخر رفع',
+	errorRow: 'رقم السطر',
+	errorColumn: 'العمود',
+	errorMessage: 'الخطأ',
+	noUploadErrors: 'لا توجد أخطاء رفع.',
 	// KPIs
 	totalLines: 'إجمالي الحركات',
 	reconciled: 'مُسوَّاة',
@@ -123,6 +137,16 @@ const ui = computed(() => lang.value === 'ar' ? {
 	title: 'Bank Reconcilation',
 	subtitle: 'Record and reconcile bank transactions against posted journal entries',
 	addBtn: 'Add Transaction',
+	downloadTemplate: 'Download Excel Template',
+	uploadTemplate: 'Upload Excel',
+	lastUploadErrorsBtn: 'Last Upload Errors',
+	uploadAccount: 'Upload Target Account',
+	selectUploadAccount: 'Select account before upload',
+	uploadErrorsTitle: 'Last Upload Errors',
+	errorRow: 'Row',
+	errorColumn: 'Column',
+	errorMessage: 'Error',
+	noUploadErrors: 'No upload errors.',
 	totalLines: 'Total Lines',
 	reconciled: 'Reconciled',
 	unmatched: 'Unmatched',
@@ -368,6 +392,47 @@ const summaryData = computed(() => props.summary ?? {
 	total_lines: 0, reconciled_lines: 0, unmatched_lines: 0,
 	reconciled_pct: 0, total_in: 0, total_out: 0,
 })
+
+// ── Excel import/export ───────────────────────────────────────────
+const uploadInputRef = ref(null)
+const showUploadErrorsModal = ref(false)
+const importForm = useForm({
+	account_id: props.accounts?.[0]?.id ?? '',
+	file: null,
+})
+
+const hasLastUploadErrors = computed(
+	() => (props.lastUploadErrors?.errors?.length ?? 0) > 0
+)
+
+function downloadTemplate() {
+	window.location.href = route('bank-statements.download-template')
+}
+
+function pickUploadFile() {
+	if (!importForm.account_id) {
+		importForm.setError('account_id', ui.value.selectUploadAccount)
+		return
+	}
+	importForm.clearErrors('account_id')
+	uploadInputRef.value?.click()
+}
+
+function onFilePicked(event) {
+	const file = event?.target?.files?.[0]
+	if (!file) return
+	importForm.file = file
+	importForm.post(route('bank-statements.upload-template'), {
+		forceFormData: true,
+		preserveScroll: true,
+		onSuccess: () => {
+			importForm.reset('file')
+		},
+		onFinish: () => {
+			if (uploadInputRef.value) uploadInputRef.value.value = null
+		},
+	})
+}
 </script>
 <template>
 	<div :dir="isRtl ? 'rtl' : 'ltr'">
@@ -377,6 +442,20 @@ const summaryData = computed(() => props.summary ?? {
 			<div class="cv-page-hero-title">{{ ui.title }}</div>
 			<div class="cv-page-hero-sub">{{ ui.subtitle }}</div>
 			<div class="cv-page-hero-actions">
+				<button v-if="canCreate" class="cv-btn cv-btn-ghost" @click="downloadTemplate">
+					{{ ui.downloadTemplate }}
+				</button>
+				<button v-if="canCreate" class="cv-btn cv-btn-ghost" @click="pickUploadFile">
+					{{ ui.uploadTemplate }}
+				</button>
+				<button
+					v-if="hasLastUploadErrors"
+					class="cv-btn"
+					style="background:var(--cv-danger-bg);border:1px solid var(--cv-danger-border);color:var(--cv-danger-text);"
+					@click="showUploadErrorsModal = true"
+				>
+					{{ ui.lastUploadErrorsBtn }}
+				</button>
 				<button v-if="canCreate" class="cv-btn cv-btn-amber" @click="openAdd">
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
 						style="flex-shrink:0">
@@ -385,6 +464,13 @@ const summaryData = computed(() => props.summary ?? {
 					</svg>
 					{{ ui.addBtn }}
 				</button>
+				<input
+					ref="uploadInputRef"
+					type="file"
+					accept=".xlsx,.xls,.csv"
+					style="display:none"
+					@change="onFilePicked"
+				/>
 			</div>
 		</div>
 		<div class="cv-page">
@@ -401,6 +487,27 @@ const summaryData = computed(() => props.summary ?? {
 					<line x1="12" y1="16" x2="12.01" y2="16" />
 				</svg>
 				{{ ui.flowHint }}
+			</div>
+			<div
+				v-if="canCreate"
+				class="cv-card"
+				style="padding:.875rem 1rem;margin-bottom:1.25rem;display:flex;gap:.75rem;align-items:end;flex-wrap:wrap"
+			>
+				<div style="min-width:260px;flex:1;">
+					<label class="cv-label">{{ ui.uploadAccount }}</label>
+					<select class="cv-select" v-model="importForm.account_id">
+						<option value="">{{ ui.selectUploadAccount }}</option>
+						<option v-for="a in accounts" :key="a.id" :value="a.id">
+							{{ a.code }} — {{ n(a) }}
+						</option>
+					</select>
+					<p v-if="importForm.errors.account_id" style="color:var(--cv-danger-text);font-size:.75rem;margin-top:.2rem;">
+						{{ importForm.errors.account_id }}
+					</p>
+					<p v-if="importForm.errors.file" style="color:var(--cv-danger-text);font-size:.75rem;margin-top:.2rem;">
+						{{ importForm.errors.file }}
+					</p>
+				</div>
 			</div>
 			<!-- ── KPI Strip ──────────────────────────────────── -->
 			<div
@@ -1078,6 +1185,64 @@ const summaryData = computed(() => props.summary ?? {
 						</button>
 						<button class="cv-btn cv-btn-danger" :disabled="deleteForm.processing" @click="submitDelete">
 							{{ ui.confirmDelete }}
+						</button>
+					</div>
+				</div>
+			</div>
+		</Transition>
+	</Teleport>
+	<!-- ════════════════════════════════════════════════════════
+             MODAL: Last Upload Errors
+        ════════════════════════════════════════════════════════ -->
+	<Teleport to="body">
+		<Transition name="cv-modal-fade">
+			<div v-if="showUploadErrorsModal" class="cv-modal-backdrop" @click.self="showUploadErrorsModal = false">
+				<div class="cv-modal" style="max-width:860px; width:100%;" :dir="isRtl ? 'rtl' : 'ltr'">
+					<div class="cv-modal-header">
+						<h3 class="cv-modal-title" style="color:var(--cv-danger-text);">{{ ui.uploadErrorsTitle }}</h3>
+						<button class="cv-modal-close" @click="showUploadErrorsModal = false">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="18" y1="6" x2="6" y2="18" />
+								<line x1="6" y1="6" x2="18" y2="18" />
+							</svg>
+						</button>
+					</div>
+					<div class="cv-modal-body">
+						<div v-if="!hasLastUploadErrors" style="color:var(--cv-text-muted);font-size:.85rem;">
+							{{ ui.noUploadErrors }}
+						</div>
+						<div v-else style="overflow:auto;max-height:50vh;border:1px solid var(--cv-border);border-radius:8px;">
+							<table style="width:100%;border-collapse:collapse;font-size:.8rem;">
+								<thead>
+									<tr style="background:var(--cv-bg-card-alt);border-bottom:1px solid var(--cv-border);">
+										<th style="padding:.65rem .75rem;text-align:start;">{{ ui.errorRow }}</th>
+										<th style="padding:.65rem .75rem;text-align:start;">{{ ui.errorColumn }}</th>
+										<th style="padding:.65rem .75rem;text-align:start;">{{ ui.errorMessage }}</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr
+										v-for="(uploadError, idx) in props.lastUploadErrors.errors"
+										:key="`${uploadError.row}-${uploadError.column}-${idx}`"
+										style="border-bottom:1px solid var(--cv-border);"
+									>
+										<td style="padding:.6rem .75rem;color:var(--cv-danger-text);font-weight:700;">
+											{{ uploadError.row }}
+										</td>
+										<td style="padding:.6rem .75rem;color:var(--cv-text-secondary);">
+											{{ uploadError.column }}
+										</td>
+										<td style="padding:.6rem .75rem;color:var(--cv-text-primary);">
+											{{ uploadError.error }}
+										</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					</div>
+					<div class="cv-modal-footer">
+						<button class="cv-btn cv-btn-ghost" @click="showUploadErrorsModal = false">
+							{{ ui.cancelBtn }}
 						</button>
 					</div>
 				</div>

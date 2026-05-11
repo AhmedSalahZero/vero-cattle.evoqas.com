@@ -562,6 +562,8 @@ Route::middleware(['auth', \App\Http\Middleware\CheckSubscriptionActive::class])
     Route::prefix('bank-statements')->name('bank-statements.')->group(function () {
         Route::get('/',                                  [BankStatementController::class, 'index'])->name('index');
         Route::post('/',                                 [BankStatementController::class, 'store'])->name('store');
+        Route::get('/template/download',                 [BankStatementController::class, 'downloadTemplate'])->name('download-template');
+        Route::post('/template/upload',                  [BankStatementController::class, 'uploadTemplate'])->name('upload-template');
         Route::put('/{bankStatement}',                   [BankStatementController::class, 'update'])->name('update');
         Route::delete('/{bankStatement}',                [BankStatementController::class, 'destroy'])->name('destroy');
         Route::patch('/{bankStatement}/match',           [BankStatementController::class, 'match'])->name('match');
