@@ -393,6 +393,76 @@ const summaryData = computed(() => props.summary ?? {
 	reconciled_pct: 0, total_in: 0, total_out: 0,
 })
 
+// ── Grouping (Month/Year) ─────────────────────────────────────────
+function monthKey(dateStr) {
+	if (!dateStr) return '__no_date__'
+	const d = new Date(dateStr)
+	if (Number.isNaN(d.getTime())) return '__no_date__'
+	const y = d.getFullYear()
+	const m = String(d.getMonth() + 1).padStart(2, '0')
+	return `${y}-${m}`
+}
+
+function monthLabel(key) {
+	if (!key || key === '__no_date__') return lang.value === 'ar' ? 'بدون تاريخ' : 'No Date'
+	const [year, month] = key.split('-')
+	const d = new Date(Number(year), Number(month) - 1, 1)
+	return d.toLocaleDateString(lang.value === 'ar' ? 'ar-EG' : 'en-GB', {
+		month: 'long',
+		year: 'numeric',
+	})
+}
+
+const groupedLines = computed(() => {
+	const data = props.lines?.data ?? []
+	const map = {}
+	for (const line of data) {
+		const key = monthKey(line.date)
+		if (!map[key]) map[key] = []
+		map[key].push(line)
+	}
+
+	const sorted = Object.entries(map).sort(([a], [b]) => {
+		if (a === '__no_date__') return 1
+		if (b === '__no_date__') return -1
+		return b.localeCompare(a)
+	})
+
+	return sorted.map(([key, lines]) => ({
+		key,
+		label: monthLabel(key),
+		lines,
+		totalRows: lines.length,
+		reconciledRows: lines.filter(l => !!l.is_reconciled).length,
+	}))
+})
+
+const collapsedGroups = ref({})
+
+function initCollapsedGroups() {
+	const next = {}
+	groupedLines.value.forEach((group, idx) => {
+		next[group.key] = group.key in collapsedGroups.value ? collapsedGroups.value[group.key] : idx !== 0
+	})
+	collapsedGroups.value = next
+}
+
+watch(groupedLines, initCollapsedGroups, { immediate: true })
+
+function toggleGroup(groupKey) {
+	collapsedGroups.value[groupKey] = !collapsedGroups.value[groupKey]
+}
+
+function expandAllGroups() {
+	Object.keys(collapsedGroups.value).forEach(k => { collapsedGroups.value[k] = false })
+}
+
+function collapseAllGroups() {
+	Object.keys(collapsedGroups.value).forEach(k => { collapsedGroups.value[k] = true })
+}
+
+const allGroupsExpanded = computed(() => Object.values(collapsedGroups.value).every(v => !v))
+
 // ── Excel import/export ───────────────────────────────────────────
 const uploadInputRef = ref(null)
 const showUploadErrorsModal = ref(false)
@@ -664,182 +734,150 @@ function onFilePicked(event) {
 						{{ ui.addBtn }}
 					</button>
 				</div>
-				<!-- Table -->
-				<div v-else style="overflow-x:auto;">
-					<table style="width:100%; border-collapse:collapse; font-size:0.8125rem;">
-						<thead>
-							<tr style="border-bottom:1px solid var(--cv-border-md);">
-								<th
-									style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">
-									{{ ui.date }}
-								</th>
-								<th
-									style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">
-									{{ ui.account }}
-								</th>
-								<th
-									style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">
-									{{ ui.description }}
-								</th>
-								<th
-									style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">
-									{{ ui.reference }}
-								</th>
-								<th
-									style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:end;">
-									{{ ui.amount }}
-								</th>
-								<th
-									style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">
-									{{ ui.status }}
-								</th>
-								<th
-									style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">
-									{{ ui.actions }}
-								</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr v-for="line in lines.data" :key="line.id"
-								style="border-bottom:1px solid var(--cv-border); transition:background .15s ease;"
-								:style="line.is_reconciled ? 'opacity:.8;' : ''"
-								onmouseover="this.style.background='var(--cv-bg-hover)'"
-								onmouseout="this.style.background=''">
-								<!-- Date -->
-								<td style="padding:.75rem 1rem; color:var(--cv-text-secondary); white-space:nowrap;">
-									{{ fmtDate(line.date) }}
-								</td>
-								<!-- Account -->
-								<td style="padding:.75rem 1rem;">
-									<div v-if="line.account" style="display:flex; flex-direction:column; gap:.125rem;">
-										<span
-											style="font-size:.6875rem; color:var(--cv-amber-text); font-weight:600; font-variant-numeric:tabular-nums;">
-											{{ line.account.code }}
-										</span>
-										<span style="color:var(--cv-text-secondary); font-size:.8rem;">
-											{{ n(line.account) }}
-										</span>
-									</div>
-									<span v-else style="color:var(--cv-text-muted);">—</span>
-								</td>
-								<!-- Description -->
-								<td style="padding:.75rem 1rem; color:var(--cv-text-primary); max-width:220px;">
-									<span
-										style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-										{{ line.description }}
-									</span>
-									<!-- Matched entry ID pill -->
-									<span v-if="line.is_matched && line.matched_entry_id" style="display:inline-flex; align-items:center; gap:.25rem; margin-top:.25rem;
-                                                     font-size:.625rem; background:var(--cv-blue-light);
-                                                     border:1px solid var(--cv-blue-border); border-radius:4px;
-                                                     padding:.125rem .375rem; color:var(--cv-blue-text);">
-										<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-											stroke-width="2">
-											<polyline points="20 6 9 17 4 12" />
-										</svg> JE #{{ line.matched_entry_id }} </span>
-								</td>
-								<!-- Reference -->
-								<td
-									style="padding:.75rem 1rem; color:var(--cv-text-muted); font-size:.8rem; white-space:nowrap;">
-									{{ line.reference || '—' }}
-								</td>
-								<!-- Amount -->
-								<td style="padding:.75rem 1rem; text-align:end; white-space:nowrap;">
-									<div
-										style="display:flex; flex-direction:column; align-items:flex-end; gap:.125rem;">
-										<span
-											:style="`font-size:.9375rem; font-weight:700; font-variant-numeric:tabular-nums; color:${parseFloat(line.amount) >= 0 ? 'var(--cv-green-bright)' : 'var(--cv-danger-text)'};`">
-											{{ parseFloat(line.amount) >= 0 ? '+' : '-' }} {{ fmtAmount(line.amount) }}
-										</span>
-										<span style="font-size:.625rem; color:var(--cv-text-muted);">
-											{{ parseFloat(line.amount) >= 0 ? ui.credit : ui.debit }}
-										</span>
-									</div>
-								</td>
-								<!-- Status badge -->
-								<td style="padding:.75rem 1rem;">
-									<span :class="statusBadgeClass(line)">{{ statusLabel(line) }}</span>
-								</td>
-								<!-- Actions -->
-								<td style="padding:.75rem 1rem;">
-									<div style="display:flex; align-items:center; gap:.375rem;">
-										<!-- Edit (unreconciled only) -->
-										<button v-if="canEdit && !line.is_reconciled" class="cv-btn cv-btn-ghost"
-											style="padding:.3rem .5rem; font-size:.75rem;" @click="openEdit(line)"
-											:title="ui.editBtn">
-											<svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-												stroke="currentColor" stroke-width="1.7">
-												<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-												<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-											</svg>
-										</button>
-										<!-- Match (unmatched + unreconciled) -->
-										<button v-if="canEdit && !line.is_matched && !line.is_reconciled"
-											class="cv-btn cv-btn-ghost"
-											style="padding:.3rem .5rem; font-size:.75rem; color:var(--cv-blue-text);"
-											@click="openMatch(line)" :title="ui.matchBtn">
-											<svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-												stroke="currentColor" stroke-width="1.7">
-												<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-												<path
-													d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-											</svg>
-										</button>
-										<!-- Unmatch (matched but not reconciled) -->
-										<button v-if="canEdit && line.is_matched && !line.is_reconciled"
-											class="cv-btn cv-btn-ghost"
-											style="padding:.3rem .5rem; font-size:.75rem; color:var(--cv-amber-text);"
-											@click="openUnmatch(line)" :title="ui.unmatchBtn">
-											<svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-												stroke="currentColor" stroke-width="1.7">
-												<path
-													d="M18.84 12.25l1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71" />
-												<path
-													d="M5.17 11.75l-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71" />
-												<line x1="8" y1="2" x2="8" y2="5" />
-												<line x1="2" y1="8" x2="5" y2="8" />
-												<line x1="16" y1="19" x2="16" y2="22" />
-												<line x1="19" y1="16" x2="22" y2="16" />
-											</svg>
-										</button>
-										<!-- Reconcile (matched but not yet reconciled) -->
-										<button v-if="canEdit && line.is_matched && !line.is_reconciled"
-											class="cv-btn cv-btn-ghost"
-											style="padding:.3rem .5rem; font-size:.75rem; color:var(--cv-green-bright);"
-											@click="openReconcile(line)" :title="ui.reconcileBtn">
-											<svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-												stroke="currentColor" stroke-width="1.7">
-												<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-												<polyline points="22 4 12 14.01 9 11.01" />
-											</svg>
-										</button>
-										<!-- Delete (unreconciled only) -->
-										<button v-if="canDelete && !line.is_reconciled" class="cv-btn cv-btn-ghost"
-											style="padding:.3rem .5rem; font-size:.75rem; color:var(--cv-danger-text);"
-											@click="openDelete(line)" :title="ui.deleteBtn">
-											<svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-												stroke="currentColor" stroke-width="1.7">
-												<polyline points="3 6 5 6 21 6" />
-												<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-												<path d="M10 11v6" />
-												<path d="M14 11v6" />
-												<path d="M9 6V4h6v2" />
-											</svg>
-										</button>
-										<!-- Reconciled lock icon -->
-										<span v-if="line.is_reconciled" style="color:var(--cv-text-muted);"
-											:title="ui.badgeReconciled">
-											<svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-												stroke="currentColor" stroke-width="1.7">
-												<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-												<path d="M7 11V7a5 5 0 0 1 10 0v4" />
-											</svg>
-										</span>
-									</div>
-								</td>
-							</tr>
-						</tbody>
-					</table>
+				<div v-else style="padding:.9rem 1rem;border-bottom:1px solid var(--cv-border);display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap;">
+					<div style="font-size:.74rem;color:var(--cv-text-muted);font-weight:600;">
+						{{ groupedLines.length }} {{ lang === 'ar' ? 'مجموعة شهرية' : 'monthly groups' }}
+					</div>
+					<div style="display:flex;gap:.4rem;">
+						<button class="cv-btn cv-btn-ghost cv-btn-sm" :disabled="allGroupsExpanded" @click="expandAllGroups">
+							{{ lang === 'ar' ? 'فتح الكل' : 'Expand All' }}
+						</button>
+						<button class="cv-btn cv-btn-ghost cv-btn-sm" @click="collapseAllGroups">
+							{{ lang === 'ar' ? 'طي الكل' : 'Collapse All' }}
+						</button>
+					</div>
+				</div>
+				<!-- Grouped table -->
+				<div v-if="lines?.data?.length">
+					<div
+						v-for="group in groupedLines"
+						:key="group.key"
+						style="border-top:1px solid var(--cv-border);"
+					>
+						<button
+							type="button"
+							style="width:100%;display:flex;justify-content:space-between;align-items:center;padding:.8rem 1rem;background:var(--cv-bg-card-alt);border:0;border-bottom:1px solid var(--cv-border);cursor:pointer;"
+							@click="toggleGroup(group.key)"
+						>
+							<div style="display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;text-align:start;">
+								<svg
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									style="width:14px;height:14px;color:var(--cv-text-muted);transition:transform .2s"
+									:style="collapsedGroups[group.key] ? 'transform:rotate(-90deg)' : ''"
+								>
+									<polyline points="6 9 12 15 18 9" />
+								</svg>
+								<span style="font-size:.85rem;font-weight:700;color:var(--cv-text-primary);">
+									{{ group.label }}
+								</span>
+							</div>
+							<div style="font-size:.74rem;color:var(--cv-text-secondary);font-weight:600;">
+								<span style="color:var(--cv-green-bright);">{{ group.reconciledRows }}</span>
+								<span>/</span>
+								<span>{{ group.totalRows }}</span>
+								<span style="margin-inline-start:4px;">{{ lang === 'ar' ? 'تمت التسوية' : 'reconciled' }}</span>
+							</div>
+						</button>
+						<div v-show="!collapsedGroups[group.key]" style="overflow-x:auto;">
+							<table style="width:100%; border-collapse:collapse; font-size:0.8125rem;">
+								<thead>
+									<tr style="border-bottom:1px solid var(--cv-border-md);">
+										<th style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">{{ ui.date }}</th>
+										<th style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">{{ ui.account }}</th>
+										<th style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">{{ ui.description }}</th>
+										<th style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">{{ ui.reference }}</th>
+										<th style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:end;">{{ ui.amount }}</th>
+										<th style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">{{ ui.status }}</th>
+										<th style="padding:.75rem 1rem; font-weight:600; font-size:.6875rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cv-text-muted); text-align:start;">{{ ui.actions }}</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr v-for="line in group.lines" :key="line.id"
+										style="border-bottom:1px solid var(--cv-border); transition:background .15s ease;"
+										:style="line.is_reconciled ? 'opacity:.8;' : ''"
+										onmouseover="this.style.background='var(--cv-bg-hover)'"
+										onmouseout="this.style.background=''">
+										<td style="padding:.75rem 1rem; color:var(--cv-text-secondary); white-space:nowrap;">{{ fmtDate(line.date) }}</td>
+										<td style="padding:.75rem 1rem;">
+											<div v-if="line.account" style="display:flex; flex-direction:column; gap:.125rem;">
+												<span style="font-size:.6875rem; color:var(--cv-amber-text); font-weight:600; font-variant-numeric:tabular-nums;">{{ line.account.code }}</span>
+												<span style="color:var(--cv-text-secondary); font-size:.8rem;">{{ n(line.account) }}</span>
+											</div>
+											<span v-else style="color:var(--cv-text-muted);">—</span>
+										</td>
+										<td style="padding:.75rem 1rem; color:var(--cv-text-primary); max-width:220px;">
+											<span style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ line.description }}</span>
+											<span v-if="line.is_matched && line.matched_entry_id" style="display:inline-flex; align-items:center; gap:.25rem; margin-top:.25rem;font-size:.625rem; background:var(--cv-blue-light);border:1px solid var(--cv-blue-border); border-radius:4px;padding:.125rem .375rem; color:var(--cv-blue-text);">
+												<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+													<polyline points="20 6 9 17 4 12" />
+												</svg> JE #{{ line.matched_entry_id }}
+											</span>
+										</td>
+										<td style="padding:.75rem 1rem; color:var(--cv-text-muted); font-size:.8rem; white-space:nowrap;">{{ line.reference || '—' }}</td>
+										<td style="padding:.75rem 1rem; text-align:end; white-space:nowrap;">
+											<div style="display:flex; flex-direction:column; align-items:flex-end; gap:.125rem;">
+												<span :style="`font-size:.9375rem; font-weight:700; font-variant-numeric:tabular-nums; color:${parseFloat(line.amount) >= 0 ? 'var(--cv-green-bright)' : 'var(--cv-danger-text)'};`">
+													{{ parseFloat(line.amount) >= 0 ? '+' : '-' }} {{ fmtAmount(line.amount) }}
+												</span>
+												<span style="font-size:.625rem; color:var(--cv-text-muted);">{{ parseFloat(line.amount) >= 0 ? ui.credit : ui.debit }}</span>
+											</div>
+										</td>
+										<td style="padding:.75rem 1rem;"><span :class="statusBadgeClass(line)">{{ statusLabel(line) }}</span></td>
+										<td style="padding:.75rem 1rem;">
+											<div style="display:flex; align-items:center; gap:.375rem;">
+												<button v-if="canEdit && !line.is_reconciled" class="cv-btn cv-btn-ghost" style="padding:.3rem .5rem; font-size:.75rem;" @click="openEdit(line)" :title="ui.editBtn">
+													<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+														<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+														<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+													</svg>
+												</button>
+												<button v-if="canEdit && !line.is_matched && !line.is_reconciled" class="cv-btn cv-btn-ghost" style="padding:.3rem .5rem; font-size:.75rem; color:var(--cv-blue-text);" @click="openMatch(line)" :title="ui.matchBtn">
+													<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+														<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+														<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+													</svg>
+												</button>
+												<button v-if="canEdit && line.is_matched && !line.is_reconciled" class="cv-btn cv-btn-ghost" style="padding:.3rem .5rem; font-size:.75rem; color:var(--cv-amber-text);" @click="openUnmatch(line)" :title="ui.unmatchBtn">
+													<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+														<path d="M18.84 12.25l1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71" />
+														<path d="M5.17 11.75l-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71" />
+														<line x1="8" y1="2" x2="8" y2="5" />
+														<line x1="2" y1="8" x2="5" y2="8" />
+														<line x1="16" y1="19" x2="16" y2="22" />
+														<line x1="19" y1="16" x2="22" y2="16" />
+													</svg>
+												</button>
+												<button v-if="canEdit && line.is_matched && !line.is_reconciled" class="cv-btn cv-btn-ghost" style="padding:.3rem .5rem; font-size:.75rem; color:var(--cv-green-bright);" @click="openReconcile(line)" :title="ui.reconcileBtn">
+													<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+														<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+														<polyline points="22 4 12 14.01 9 11.01" />
+													</svg>
+												</button>
+												<button v-if="canDelete && !line.is_reconciled" class="cv-btn cv-btn-ghost" style="padding:.3rem .5rem; font-size:.75rem; color:var(--cv-danger-text);" @click="openDelete(line)" :title="ui.deleteBtn">
+													<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+														<polyline points="3 6 5 6 21 6" />
+														<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+														<path d="M10 11v6" />
+														<path d="M14 11v6" />
+														<path d="M9 6V4h6v2" />
+													</svg>
+												</button>
+												<span v-if="line.is_reconciled" style="color:var(--cv-text-muted);" :title="ui.badgeReconciled">
+													<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+														<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+														<path d="M7 11V7a5 5 0 0 1 10 0v4" />
+													</svg>
+												</span>
+											</div>
+										</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					</div>
 				</div>
 				<!-- Pagination -->
 				<div v-if="lines?.data?.length && lines.last_page > 1"
