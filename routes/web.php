@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\CopyCompanyToDevController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\UserTaskController;
 use App\Http\Controllers\FarmController;
@@ -102,6 +103,7 @@ Route::middleware(['auth', \App\Http\Middleware\CheckSubscriptionActive::class])
             Route::get('/{company}/edit',              [CompanyController::class, 'edit'])->name('edit');
             Route::put('/{company}',                   [CompanyController::class, 'update'])->name('update');
             Route::post('/{company}/enter',            [CompanyController::class, 'enter'])->name('enter');
+            Route::post('/{company}/copy-to-dev',      CopyCompanyToDevController::class)->name('copy-to-dev');
             Route::delete('/{company}',                [CompanyController::class, 'destroy'])->name('destroy');
             Route::patch('/{company}/toggle-active',   [CompanyController::class, 'toggleActive'])->name('toggle-active');
             Route::patch('/{company}/accounting-mode', [CompanyController::class, 'updateAccountingMode'])->name('accounting-mode');

@@ -10,6 +10,7 @@
 import { ref, computed } from 'vue'
 import { Head, Link, router, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
+import axios from 'axios'
 
 defineOptions({ layout: AuthenticatedLayout })
 
@@ -88,6 +89,44 @@ function executeDelete() {
     router.delete(route('companies.destroy', deleteTarget.value.id), {
         onFinish: () => { deleteLoading.value = false; deleteTarget.value = null },
     })
+}
+
+// ── Copy to dev ────────────────────────────────────────────────────
+const copyLoadingCompanyId = ref(null)
+const copyFeedback = ref({ type: '', message: '' })
+const copyConfirmTarget = ref(null)
+const resultModal = ref({ show: false, type: 'success', message: '' })
+
+function copyToDev(company) {
+    copyConfirmTarget.value = company
+}
+
+function closeResultModal() {
+    resultModal.value = { show: false, type: 'success', message: '' }
+}
+
+async function executeCopyToDev() {
+    if (!copyConfirmTarget.value) return
+    const company = copyConfirmTarget.value
+    copyLoadingCompanyId.value = company.id
+    copyFeedback.value = { type: '', message: '' }
+
+    try {
+        const { data } = await axios.post(route('companies.copy-to-dev', company.id))
+        const successMessage = data?.message || 'Company data copied to dev successfully.'
+        copyFeedback.value = {
+            type: 'success',
+            message: successMessage,
+        }
+        resultModal.value = { show: true, type: 'success', message: successMessage }
+    } catch (error) {
+        const message = error?.response?.data?.message || 'Failed to copy company data to dev.'
+        copyFeedback.value = { type: 'error', message }
+        resultModal.value = { show: true, type: 'error', message }
+    } finally {
+        copyLoadingCompanyId.value = null
+        copyConfirmTarget.value = null
+    }
 }
 
 // ── Toggle active ──────────────────────────────────────────────────
@@ -179,6 +218,18 @@ function avatarGrad(c) { return gradients[(c.id ?? 0) % gradients.length] }
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
                         </svg>
                         {{ flash.error }}
+                    </div>
+                </Transition>
+                <Transition name="fade">
+                    <div v-if="copyFeedback.message" class="flash mb-5"
+                        :class="copyFeedback.type === 'success' ? 'flash-success' : 'flash-error'">
+                        <svg v-if="copyFeedback.type === 'success'" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                        </svg>
+                        <svg v-else class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                        {{ copyFeedback.message }}
                     </div>
                 </Transition>
 
@@ -378,6 +429,23 @@ function avatarGrad(c) { return gradients[(c.id ?? 0) % gradients.length] }
                                     </svg>
                                     Delete
                                 </button>
+                                <button
+                                    @click="copyToDev(company)"
+                                    class="act-btn act-copydev"
+                                    :disabled="copyLoadingCompanyId === company.id"
+                                    :class="{ 'act-disabled': copyLoadingCompanyId === company.id }"
+                                    title="Copy this company data to dev database"
+                                >
+                                    <svg v-if="copyLoadingCompanyId !== company.id" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <ellipse cx="12" cy="5" rx="8" ry="3"></ellipse>
+                                        <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path>
+                                        <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path>
+                                    </svg>
+                                    <svg v-else class="w-3.5 h-3.5 spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-6.219-8.56" />
+                                    </svg>
+                                    {{ copyLoadingCompanyId === company.id ? 'Copying...' : 'Copy to Dev' }}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -420,7 +488,63 @@ function avatarGrad(c) { return gradients[(c.id ?? 0) % gradients.length] }
             </Transition>
         </Teleport>
 
-    
+        <!-- ══ COPY TO DEV CONFIRM MODAL ═════════════════════════════════ -->
+        <Teleport to="body">
+            <Transition name="modal">
+                <div v-if="copyConfirmTarget" class="del-backdrop" @click.self="copyConfirmTarget = null">
+                    <div class="del-box">
+                        <div class="del-icon-wrap copy-icon-wrap">
+                            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <ellipse cx="12" cy="5" rx="8" ry="3"></ellipse>
+                                <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path>
+                                <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path>
+                            </svg>
+                        </div>
+                        <h3 class="del-title">Copy Company To Dev</h3>
+                        <p class="del-body">
+                            This will overwrite all
+                            <strong class="del-company">{{ copyConfirmTarget?.name_en }}</strong>
+                            data in the dev database. Continue?
+                        </p>
+                        <div class="del-footer">
+                            <button class="del-btn-cancel" @click="copyConfirmTarget = null">Cancel</button>
+                            <button class="del-btn-confirm copy-confirm-btn"
+                                    :class="{'btn-loading': copyLoadingCompanyId === copyConfirmTarget?.id}"
+                                    @click="executeCopyToDev">
+                                <svg v-if="copyLoadingCompanyId !== copyConfirmTarget?.id" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                                </svg>
+                                {{ copyLoadingCompanyId === copyConfirmTarget?.id ? 'Copying...' : 'Confirm Copy' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </Transition>
+        </Teleport>
+
+        <!-- ══ COPY RESULT MODAL ═════════════════════════════════════════ -->
+        <Teleport to="body">
+            <Transition name="modal">
+                <div v-if="resultModal.show" class="del-backdrop" @click.self="closeResultModal">
+                    <div class="del-box">
+                        <div class="del-icon-wrap" :class="resultModal.type === 'success' ? 'res-ok' : 'res-fail'">
+                            <svg v-if="resultModal.type === 'success'" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                            </svg>
+                            <svg v-else class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </div>
+                        <h3 class="del-title">{{ resultModal.type === 'success' ? 'Operation Completed' : 'Operation Failed' }}</h3>
+                        <p class="del-body">{{ resultModal.message }}</p>
+                        <div class="del-footer">
+                            <button class="del-btn-cancel" @click="closeResultModal">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </Transition>
+        </Teleport>
+
 </template>
 
 <style scoped>
@@ -730,6 +854,17 @@ function avatarGrad(c) { return gradients[(c.id ?? 0) % gradients.length] }
 .act-enter-active {
     background: rgba(26,107,58,0.12); color: #1A6B3A; border-color: rgba(26,107,58,0.4);
 }
+.act-copydev {
+    background: rgba(232,131,10,0.1);
+    color: #c46d08;
+    border-color: rgba(232,131,10,0.28);
+}
+.act-copydev:hover {
+    background: rgba(232,131,10,0.18);
+    border-color: rgba(232,131,10,0.45);
+    box-shadow: 0 2px 8px rgba(232,131,10,0.2);
+}
+.spin { animation: spin 1s linear infinite; }
 
 /* Active company banner */
 .active-company-banner {
@@ -792,6 +927,29 @@ function avatarGrad(c) { return gradients[(c.id ?? 0) % gradients.length] }
     display: flex; align-items: center; justify-content: center; color: #C0392B;
     align-self: flex-start;
 }
+.copy-icon-wrap {
+    background: rgba(232,131,10,0.12);
+    border-color: rgba(232,131,10,0.3);
+    color: #c46d08;
+}
+.copy-confirm-btn {
+    background: #e8830a;
+    border-color: #e8830a;
+}
+.copy-confirm-btn:hover {
+    background: #c46d08;
+    box-shadow: 0 4px 16px rgba(232,131,10,0.35);
+}
+.res-ok {
+    background: rgba(26,107,58,0.1);
+    border-color: rgba(26,107,58,0.3);
+    color: #1A6B3A;
+}
+.res-fail {
+    background: rgba(192,57,43,0.1);
+    border-color: rgba(192,57,43,0.3);
+    color: #C0392B;
+}
 .del-title   { font-size: 1.0625rem; font-weight: 800; color: var(--cv-text-primary); }
 .del-body    { font-size: 0.875rem; color: var(--cv-text-secondary); line-height: 1.6; }
 .del-company { color: var(--cv-text-primary); }
@@ -830,4 +988,5 @@ function avatarGrad(c) { return gradients[(c.id ?? 0) % gradients.length] }
 .modal-leave-active { transition: opacity 0.15s ease, transform 0.15s ease; }
 .modal-enter-from, .modal-leave-to { opacity: 0; }
 .modal-enter-from .del-box { transform: scale(0.96) translateY(8px); }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
