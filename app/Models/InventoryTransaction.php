@@ -103,7 +103,7 @@ class InventoryTransaction extends Model
      */
     public function getQtySignedAttribute(): float
     {
-        return in_array($this->type, ['consumption', 'transfer_out'])
+        return in_array($this->type, ['consumption', 'transfer_out', 'mix_out'])
             ? -(float) $this->qty
             : (float) $this->qty;
     }

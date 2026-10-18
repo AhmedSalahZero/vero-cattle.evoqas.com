@@ -86,8 +86,9 @@ class DashboardService
             ->when($farmId, fn($q) => $q->where('farm_id', $farmId));
 
         // Active head count
+        // On the farm = active + reserved (in a draft sale) + quarantine.
         $activeHead = $scope('animals')
-            ->where('status', 'active')
+            ->whereIn('status', ['active', 'reserved', 'quarantine'])
             ->whereNull('deleted_at')
             ->count();
 
@@ -101,7 +102,7 @@ class DashboardService
             ->join('animals as a', 'a.id', '=', 'wr.animal_id')
             ->where('wr.company_id', $companyId)
             ->when($farmId, fn($q) => $q->where('wr.farm_id', $farmId))
-            ->where('a.status', 'active')
+            ->whereIn('a.status', ['active', 'reserved', 'quarantine'])
             ->whereNotNull('wr.adg_kg')
             ->whereRaw('wr.id IN (
                 SELECT MAX(id) FROM weight_records
@@ -136,9 +137,10 @@ class DashboardService
             ->count();
 
         return [
-            'active_head'          => $activeHead,
+            // Key names are the ones Dashboard/Index.vue reads.
+            'active_head_count'    => $activeHead,
             'active_lots'          => $activeLots,
-            'avg_adg_kg'           => $avgAdg ? round((float) $avgAdg, 3) : null,
+            'avg_adg_kg_day'       => $avgAdg ? round((float) $avgAdg, 3) : null,
             'feed_cost_mtd'        => round((float) $feedCostMtd,        2),
             'vet_cost_mtd'         => round((float) $vetCostMtd,         2),
             'vaccination_cost_mtd' => round((float) $vaccinationCostMtd, 2),
@@ -278,7 +280,56 @@ class DashboardService
         string $ytdStart,
         string $today
     ): array {
-        // Monthly revenue — last 12 months
+        // Monthly revenue vs COGS — year to date, from the ledger (same source as the P&L,
+        // so the chart always agrees with the P&L report).
+        $ledger = DB::table('journal_lines as jl')
+            ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
+            ->join('accounts as a', 'a.id', '=', 'jl.account_id')
+            ->where('je.company_id', $companyId)
+            ->whereIn('je.status', ['posted', 'reversed'])
+            ->whereNull('je.deleted_at')
+            ->whereNull('jl.deleted_at')
+            ->whereBetween('je.date', [$ytdStart, $today])
+            ->whereIn('a.type', ['revenue', 'cogs'])
+            ->selectRaw('DATE_FORMAT(je.date, "%Y-%m") as month, a.type,
+                         SUM(jl.debit) as d, SUM(jl.credit) as c')
+            ->groupBy('month', 'a.type')
+            ->get();
+
+        $monthlyRevenueCogs = [];
+        for ($m = Carbon::parse($ytdStart)->startOfMonth();
+             $m->lte(Carbon::parse($today));
+             $m->addMonth()) {
+            $key = $m->format('Y-m');
+            $rev = '0';
+            $cogs = '0';
+            foreach ($ledger->where('month', $key) as $r) {
+                if ($r->type === 'revenue') { $rev  = bcadd($rev,  bcsub((string) $r->c, (string) $r->d, 4), 4); }
+                else                        { $cogs = bcadd($cogs, bcsub((string) $r->d, (string) $r->c, 4), 4); }
+            }
+            $monthlyRevenueCogs[] = [
+                'month'   => $key,
+                'label'   => $m->format('M Y'),
+                'revenue' => round((float) $rev,  2),
+                'cogs'    => round((float) $cogs, 2),
+            ];
+        }
+
+        // Active head by lot (animals on the farm, per active lot)
+        $headCountByLot = DB::table('animals as an')
+            ->join('lots as l', 'l.id', '=', 'an.lot_id')
+            ->where('an.company_id', $companyId)
+            ->when($farmId, fn($q) => $q->where('an.farm_id', $farmId))
+            ->where('l.status', 'active')
+            ->whereIn('an.status', ['active', 'reserved', 'quarantine'])
+            ->whereNull('an.deleted_at')
+            ->groupBy('l.id', 'l.name')
+            ->orderBy('l.name')
+            ->get(['l.id', 'l.name', DB::raw('COUNT(an.id) as head_count')])
+            ->map(fn($r) => ['id' => $r->id, 'name' => $r->name, 'head_count' => (int) $r->head_count])
+            ->toArray();
+
+        // Monthly revenue from confirmed sales (kept for API consumers)
         // Column is `date` (not `sale_date`) per schema
         $revenueByMonth = DB::table('sales_records')
             ->where('company_id', $companyId)
@@ -295,7 +346,7 @@ class DashboardService
         $headByBreed = DB::table('animals')
             ->where('company_id', $companyId)
             ->when($farmId, fn($q) => $q->where('farm_id', $farmId))
-            ->where('status', 'active')
+            ->whereIn('status', ['active', 'reserved', 'quarantine'])
             ->whereNull('deleted_at')
             ->selectRaw('breed, COUNT(*) as count')
             ->groupBy('breed')
@@ -335,6 +386,8 @@ class DashboardService
         ])->values()->toArray();
 
         return [
+            'monthly_revenue_cogs' => $monthlyRevenueCogs,   // read by Dashboard/Index.vue
+            'head_count_by_lot'    => $headCountByLot,       // read by Dashboard/Index.vue
             'revenue_by_month' => $revenueByMonth,
             'head_by_breed'    => $headByBreed,
             'cost_trend'       => $costTrend,

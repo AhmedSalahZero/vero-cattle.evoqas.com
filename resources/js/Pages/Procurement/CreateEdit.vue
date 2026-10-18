@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useForm, router, Link } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 
 // ── Props ─────────────────────────────────────────────────────────
 const props = defineProps({
@@ -35,7 +35,7 @@ const form = useForm({
 	farm_id: props.procurement?.farm_id ?? '',
 	supplier_id: props.procurement?.supplier_id ?? '',
 	lot_id: props.procurement?.lot_id ?? '',
-	date: props.procurement?.date ?? new Date().toISOString().split('T')[0],
+	date: props.procurement?.date ?? localToday(),
 	invoice_ref: props.procurement?.invoice_ref ?? '',
 
 	// ── Cattle PO fields (Migration 056) ─────────────────────────
@@ -96,11 +96,13 @@ const itemLineTotal = computed(() =>
 )
 
 // ── Auto-calculate due date ───────────────────────────────────────
+// QA-019: local calendar, and 0 days is a valid term ("due on the invoice date")
 watch(() => [form.date, form.payment_terms_days], ([date, days]) => {
-	if (date && days) {
-		const d = new Date(date)
-		d.setDate(d.getDate() + Number(days))
-		form.due_date = d.toISOString().split('T')[0]
+	const n = parseInt(days)
+	if (date && !Number.isNaN(n)) {
+		const [y, m, dd] = String(date).slice(0, 10).split('-').map(Number)
+		const d = new Date(y, m - 1, dd + n)
+		form.due_date = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 	}
 })
 

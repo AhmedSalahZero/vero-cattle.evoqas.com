@@ -6,10 +6,10 @@
 //  📌 METHODOLOGY REFERENCE: DressingPercentage (#19)
 //  dressing_pct = (deadweight_kg / liveweight_kg) × 100
 // ══════════════════════════════════════════════════════════════════
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { router, useForm } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
 defineOptions({ layout: AuthenticatedLayout })
@@ -69,7 +69,7 @@ const form = useForm({
     animal_id:      '',
     farm_id:        '',
     lot_id:         '',
-    date:           new Date().toISOString().slice(0,10),
+    date:           localToday(),
     abattoir:       '',
     liveweight_kg:  '',
     deadweight_kg:  '',
@@ -98,7 +98,11 @@ const panelLots = computed(() =>
         : []
 )
 
+// QA-049: while an existing record is being loaded into the form these watchers must stay quiet —
+// before, opening Edit cleared the lot and the animal (they reset themselves as farm/lot were filled in).
+let suppressCascade = false
 watch(() => form.farm_id, () => {
+    if (suppressCascade) return
     form.lot_id     = ''
     form.animal_id  = ''
     panelAnimals.value = []
@@ -106,12 +110,16 @@ watch(() => form.farm_id, () => {
 })
 
 watch(() => form.lot_id, () => {
+    if (suppressCascade) return
     form.animal_id = ''
     panelAnimals.value = []
     if (form.lot_id) loadAnimals()
 })
 
+// QA-050: newest answer wins (a slow answer for an earlier farm/lot must not replace the list)
+let animalsReq = 0
 async function loadAnimals() {
+    const myReq = ++animalsReq
     loadingAnimals.value = true
     try {
         const params = new URLSearchParams()
@@ -120,17 +128,21 @@ async function loadAnimals() {
         // ✅ uses web middleware (session auth) — not sanctum
         const res = await fetch(route('slaughter.animals') + '?' + params)
         if (!res.ok) throw new Error('HTTP ' + res.status)
-        panelAnimals.value = await res.json()
+        const list = await res.json()
+        if (myReq !== animalsReq) return
+        panelAnimals.value = list
     } catch {
+        if (myReq !== animalsReq) return
         panelAnimals.value = []
     } finally {
-        loadingAnimals.value = false
+        if (myReq === animalsReq) loadingAnimals.value = false
     }
 }
 
 function openCreate() {
+    suppressCascade = false
     form.reset()
-    form.date = new Date().toISOString().slice(0,10)
+    form.date = localToday()
     form.currency = 'EGP'
     editingId.value = null
     panelMode.value = 'create'
@@ -139,7 +151,8 @@ function openCreate() {
 }
 
 async function openEdit(rec) {
-    form.animal_id      = ''          // clear first — set after animals load
+    suppressCascade     = true
+    form.animal_id      = ''
     form.farm_id        = rec.farm_id
     form.lot_id         = rec.lot_id ?? ''
     form.date           = rec.date
@@ -154,15 +167,18 @@ async function openEdit(rec) {
     form.clearErrors()
     editingId.value     = rec.id
     panelMode.value     = 'edit'
-    panelAnimals.value  = []
+    // QA-049: the animal of an existing record is already 'slaughtered', so it is not in the list of
+    // active animals. Show that one animal; farm, lot and animal cannot be changed on an existing record
+    // (the server keeps them as they are).
+    panelAnimals.value  = rec.animal ? [rec.animal] : []
+    form.animal_id      = rec.animal_id
     panelOpen.value     = true
-
-    // Load animals first, THEN set animal_id so the <select> has options
-    await loadAnimals()
-    form.animal_id = rec.animal_id
+    await nextTick()
+    suppressCascade = false
 }
 
 function closePanel() { panelOpen.value = false }
+const formErrorList = computed(() => [...new Set(Object.values(form.errors || {}))])
 
 function submitForm() {
     if (panelMode.value === 'create') {
@@ -435,7 +451,7 @@ const fmtW = (n) => n == null ? '—' : Number(n).toLocaleString(lang.value === 
                                 <div class="flex flex-col gap-3">
                                     <div>
                                         <label class="cv-label">{{ lang === 'ar' ? 'المزرعة' : 'Farm' }} <span style="color:var(--cv-danger)">*</span></label>
-                                        <select v-model="form.farm_id" class="cv-select" :class="{'cv-input-error': form.errors.farm_id}">
+                                        <select v-model="form.farm_id" class="cv-select" :disabled="panelMode === 'edit'" :class="{'cv-input-error': form.errors.farm_id}">
                                             <option value="">{{ lang === 'ar' ? 'اختر المزرعة' : 'Select farm' }}</option>
                                             <option v-for="f in farms" :key="f.id" :value="f.id">{{ n(f,'name') }}</option>
                                         </select>
@@ -443,14 +459,14 @@ const fmtW = (n) => n == null ? '—' : Number(n).toLocaleString(lang.value === 
                                     </div>
                                     <div>
                                         <label class="cv-label">{{ lang === 'ar' ? 'الحظيرة' : 'Lot' }}</label>
-                                        <select v-model="form.lot_id" class="cv-select" :disabled="!form.farm_id">
+                                        <select v-model="form.lot_id" class="cv-select" :disabled="!form.farm_id || panelMode === 'edit'">
                                             <option value="">{{ lang === 'ar' ? 'اختر الحظيرة (اختياري)' : 'Select lot (optional)' }}</option>
                                             <option v-for="l in panelLots" :key="l.id" :value="l.id">{{ l.name }}</option>
                                         </select>
                                     </div>
                                     <div>
                                         <label class="cv-label">{{ lang === 'ar' ? 'الماشية' : 'Animal' }} <span style="color:var(--cv-danger)">*</span></label>
-                                        <select v-model="form.animal_id" class="cv-select" :disabled="!form.farm_id || loadingAnimals" :class="{'cv-input-error': form.errors.animal_id}">
+                                        <select v-model="form.animal_id" class="cv-select" :disabled="!form.farm_id || loadingAnimals || panelMode === 'edit'" :class="{'cv-input-error': form.errors.animal_id}">
                                             <option value="">{{ loadingAnimals ? (lang==='ar'?'جاري التحميل…':'Loading…') : (lang==='ar'?'اختر الماشية':'Select animal') }}</option>
                                             <option v-for="a in panelAnimals" :key="a.id" :value="a.id">{{ a.tag }} — {{ a.breed }}</option>
                                         </select>
@@ -519,6 +535,12 @@ const fmtW = (n) => n == null ? '—' : Number(n).toLocaleString(lang.value === 
                                 </div>
                             </div>
 
+                            <!-- QA-051: every message from the server is shown (cost, deadweight, grade … had no place on screen) -->
+                            <div v-if="formErrorList.length" class="cv-alert cv-alert-danger">
+                                <ul style="margin:0;padding-inline-start:1.1rem">
+                                    <li v-for="m in formErrorList" :key="m" style="font-size:.8rem">{{ m }}</li>
+                                </ul>
+                            </div>
                             <!-- Actions -->
                             <div class="flex justify-end gap-3">
                                 <button class="cv-btn cv-btn-ghost" @click="closePanel">{{ lang === 'ar' ? 'إلغاء' : 'Cancel' }}</button>

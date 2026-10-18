@@ -18,6 +18,7 @@ use App\Http\Controllers\CalvingController;
 use App\Http\Controllers\FeedItemController;
 use App\Http\Controllers\RationController;
 use App\Http\Controllers\FeedConsumptionController;
+use App\Http\Controllers\FeedMixingController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\InventoryLocationController;
 use App\Http\Controllers\SlaughterController;
@@ -159,7 +160,6 @@ Route::middleware(['auth', \App\Http\Middleware\CheckSubscriptionActive::class])
         Route::get('/{lot}/edit',                [LotController::class, 'edit'])->name('edit');
         Route::put('/{lot}',                     [LotController::class, 'update'])->name('update');
         Route::delete('/{lot}',                  [LotController::class, 'destroy'])->name('destroy');
-        Route::patch('/{lot}/close',             [LotController::class, 'close'])->name('close');
     });
 
     // ══════════════════════════════════════════════════════
@@ -174,7 +174,6 @@ Route::middleware(['auth', \App\Http\Middleware\CheckSubscriptionActive::class])
         Route::get('/{animal}/edit',             [AnimalController::class, 'edit'])->name('edit');
         Route::match(['PUT', 'POST'], '/{animal}', [AnimalController::class, 'update'])->name('update');
         Route::delete('/{animal}',               [AnimalController::class, 'destroy'])->name('destroy');
-        Route::patch('/{animal}/transfer',       [AnimalController::class, 'transfer'])->name('transfer');
     });
 
     // ══════════════════════════════════════════════════════
@@ -340,6 +339,23 @@ Route::middleware(['auth', \App\Http\Middleware\CheckSubscriptionActive::class])
         Route::post('/batch',                [FeedConsumptionController::class, 'batchStore'])->name('batch');
         Route::put('/{feedConsumption}',     [FeedConsumptionController::class, 'update'])->name('update');
         Route::delete('/{feedConsumption}',  [FeedConsumptionController::class, 'destroy'])->name('destroy');
+    });
+
+    // ══════════════════════════════════════════════════════
+    // FEED — MIXING (WIP)   📌 FeedMixingWip (#53)
+    // Static paths (/create) are registered BEFORE /{feedMixingBatch}
+    // ══════════════════════════════════════════════════════
+    Route::prefix('feed/mixing')->name('feed.mixing.')->group(function () {
+        Route::get('/',                              [FeedMixingController::class, 'index'])->name('index');
+        Route::get('/create',                        [FeedMixingController::class, 'create'])->name('create');
+        Route::post('/',                             [FeedMixingController::class, 'store'])->name('store');
+        Route::get('/{feedMixingBatch}',             [FeedMixingController::class, 'show'])->name('show');
+        Route::get('/{feedMixingBatch}/edit',        [FeedMixingController::class, 'edit'])->name('edit');
+        Route::put('/{feedMixingBatch}',             [FeedMixingController::class, 'update'])->name('update');
+        Route::delete('/{feedMixingBatch}',          [FeedMixingController::class, 'destroy'])->name('destroy');
+        Route::patch('/{feedMixingBatch}/start',     [FeedMixingController::class, 'start'])->name('start');
+        Route::patch('/{feedMixingBatch}/finish',    [FeedMixingController::class, 'finish'])->name('finish');
+        Route::patch('/{feedMixingBatch}/cancel',    [FeedMixingController::class, 'cancel'])->name('cancel');
     });
 
     // ══════════════════════════════════════════════════════════════
@@ -513,7 +529,6 @@ Route::middleware(['auth', \App\Http\Middleware\CheckSubscriptionActive::class])
         Route::get('/create',                                               [ApInvoiceController::class, 'create'])->name('create');
         Route::post('/',                                                    [ApInvoiceController::class, 'store'])->name('store');
         // ── Accrual matching — MUST be before /{apInvoice} wildcard ──
-        Route::get('/{apInvoice}/pending-accruals',                         [ApInvoiceController::class, 'pendingAccrualsEndpoint'])->name('pending-accruals');
         Route::patch('/{apInvoice}/match-accruals',                         [ApInvoiceController::class, 'matchAccruals'])->name('match-accruals');
         Route::patch('/{apInvoice}/unmatch-accrual/{inventoryTransaction}', [ApInvoiceController::class, 'unmatchAccrual'])->name('unmatch-accrual');
         // ── Wildcard routes last ──────────────────────────────────────

@@ -175,7 +175,7 @@ class InventoryLocationService
             $companyId        = $sourceStock->company_id;
             $sourceQtyAfter   = (float) bcsub((string) $sourceStock->qty_on_hand, (string) $qty, 4);
             $destQtyAfter     = (float) bcadd((string) $destStock->qty_on_hand,   (string) $qty, 4);
-            $total            = (float) bcadd(bcmul((string) $qty, (string) $unitCost, 4), '0', 2);
+            $total            = (float) \App\Support\Money::round(bcmul((string) $qty, (string) $unitCost, 4), 2);
 
             // 📌 Step 3 — Update stock (writes happen AFTER all guards pass)
             $sourceStock->decrement('qty_on_hand', $qty);

@@ -55,7 +55,7 @@ class FarmCostAllocationController extends Controller
         // §6.5 — session-based company resolution for Super Admin
         $companyId = $this->resolveCompanyId($request);
 
-        $query = FarmCostAllocation::with(['farm:id,name', 'fiscalYear:id,year'])
+        $query = FarmCostAllocation::with(['farm:id,name_en,name_ar', 'fiscalYear:id,year'])
             ->where('company_id', $companyId);
 
         if ($request->filled('farm_id'))  $query->where('farm_id', $request->farm_id);
@@ -152,6 +152,11 @@ class FarmCostAllocationController extends Controller
         ]);
 
         // Guard: duplicate month/farm
+        // Farm, fiscal year and overhead types must belong to this company.
+        abort_unless(\App\Models\Farm::where('id', $validated['farm_id'])->where('company_id', $companyId)->exists(), 403);
+        abort_unless(\App\Models\FiscalYear::where('id', $validated['fiscal_year_id'])->where('company_id', $companyId)->exists(), 403);
+        $this->assertOverheadTypesBelongToCompany($validated['overhead_lines'] ?? [], (int) $companyId);
+
         $exists = FarmCostAllocation::where('farm_id', $validated['farm_id'])
             ->where('year', $validated['year'])
             ->where('month', $validated['month'])
@@ -207,6 +212,7 @@ class FarmCostAllocationController extends Controller
             403
         );
 
+        $this->assertSameCompany($authUser, $farmCostAllocation->company_id);
         abort_unless($farmCostAllocation->isDraft(), 403, 'Only draft allocations can be edited.');
 
         $companyId = $farmCostAllocation->company_id;
@@ -225,6 +231,12 @@ class FarmCostAllocationController extends Controller
     // ── Update ────────────────────────────────────────────────────
     public function update(Request $request, FarmCostAllocation $farmCostAllocation)
     {
+        $authUser = Auth::user();
+        abort_unless(
+            $authUser->is_super_admin || $authUser->hasPermissionTo('edit journal_entries'),
+            403
+        );
+        $this->assertSameCompany($authUser, $farmCostAllocation->company_id);
         abort_unless($farmCostAllocation->isDraft(), 403, 'Only draft allocations can be edited.');
 
         $this->sanitizeNullableFields($request);
@@ -236,6 +248,8 @@ class FarmCostAllocationController extends Controller
             'overhead_lines.*.overhead_type_id' => ['required', 'integer', 'exists:farm_overhead_types,id'],
             'overhead_lines.*.estimated_amount' => ['required', 'numeric', 'min:0'],
         ]);
+
+        $this->assertOverheadTypesBelongToCompany($validated['overhead_lines'] ?? [], (int) $farmCostAllocation->company_id);
 
         DB::transaction(function () use ($validated, $farmCostAllocation) {
             $farmCostAllocation->update([
@@ -267,6 +281,7 @@ class FarmCostAllocationController extends Controller
             403
         );
 
+        $this->assertSameCompany(Auth::user(), $farmCostAllocation->company_id);
         abort_unless($farmCostAllocation->isDraft(), 403, 'Only draft allocations can be deleted.');
 
         // Cascade deletes overhead lines automatically (DB constraint)
@@ -286,6 +301,8 @@ class FarmCostAllocationController extends Controller
             $authUser->hasPermissionTo('create journal_entries'),
             403
         );
+
+        $this->assertSameCompany($authUser, $farmCostAllocation->company_id);
 
         try {
             $this->service->postMonthEndAccrual($farmCostAllocation, $authUser->id);
@@ -308,6 +325,7 @@ class FarmCostAllocationController extends Controller
             403
         );
 
+        $this->assertSameCompany($authUser, $farmCostAllocation->company_id);
         $this->sanitizeNullableFields($request);
 
         $request->validate([
@@ -316,6 +334,15 @@ class FarmCostAllocationController extends Controller
             'overhead_actuals'     => ['nullable', 'array'],
             'overhead_actuals.*'   => ['numeric', 'min:0'],
         ]);
+
+        // The payment account must belong to the same company as the
+        // allocation — a foreign account is refused outright (404).
+        abort_unless(
+            \App\Models\Account::where('id', (int) $request->payment_account_id)
+                ->where('company_id', (int) $farmCostAllocation->company_id)
+                ->exists(),
+            404
+        );
 
         $overheadActuals = [];
         foreach ($request->input('overhead_actuals', []) as $typeId => $amount) {
@@ -432,6 +459,8 @@ class FarmCostAllocationController extends Controller
             return back()->withErrors(['name_en' => 'At least one name is required.']);
         }
 
+        $this->assertAccountsBelongToCompany([$validated['accrued_account_id'], $validated['variance_account_id']], $companyId);
+
         FarmOverheadType::create(array_merge($validated, [
             'company_id' => $companyId,
             'is_active'  => true,
@@ -443,6 +472,10 @@ class FarmCostAllocationController extends Controller
     // ── Overhead Types — Update ───────────────────────────────────
     public function updateOverheadType(Request $request, FarmOverheadType $farmOverheadType)
     {
+        $authUser = Auth::user();
+        abort_unless($authUser->is_super_admin || $authUser->hasPermissionTo('edit accounts'), 403);
+        $this->assertSameCompany($authUser, $farmOverheadType->company_id);
+
         $this->sanitizeNullableFields($request);
 
         $validated = $request->validate([
@@ -457,6 +490,8 @@ class FarmCostAllocationController extends Controller
             return back()->withErrors(['name_en' => 'At least one name is required.']);
         }
 
+        $this->assertAccountsBelongToCompany([$validated['accrued_account_id'], $validated['variance_account_id']], (int) $farmOverheadType->company_id);
+
         $farmOverheadType->update($validated);
 
         return back()->with('success', 'Overhead type updated.');
@@ -465,6 +500,10 @@ class FarmCostAllocationController extends Controller
     // ── Overhead Types — Destroy ──────────────────────────────────
     public function destroyOverheadType(FarmOverheadType $farmOverheadType)
     {
+        $authUser = Auth::user();
+        abort_unless($authUser->is_super_admin || $authUser->hasPermissionTo('delete accounts'), 403);
+        $this->assertSameCompany($authUser, $farmOverheadType->company_id);
+
         // Block deletion if any lines reference this type
         $inUse = FarmOverheadLine::where('overhead_type_id', $farmOverheadType->id)->exists();
         if ($inUse) {
@@ -644,5 +683,41 @@ class FarmCostAllocationController extends Controller
             ])
             ->values()
             ->all();
+    }
+
+    // ── Tenant guards ─────────────────────────────────────────────
+
+    /** Super Admin may touch any company; everyone else only their own. */
+    private function assertSameCompany($authUser, $companyId): void
+    {
+        abort_unless(
+            $authUser->is_super_admin || (int) $authUser->company_id === (int) $companyId,
+            403
+        );
+    }
+
+    /** Overhead types named on a form must belong to the company. */
+    private function assertOverheadTypesBelongToCompany(array $lines, int $companyId): void
+    {
+        $ids = collect($lines)->pluck('overhead_type_id')->unique()->values();
+
+        if ($ids->isNotEmpty()
+            && FarmOverheadType::whereIn('id', $ids)->where('company_id', $companyId)->count() !== $ids->count()) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'overhead_lines' => __('validation.exists', ['attribute' => 'overhead type']),
+            ]);
+        }
+    }
+
+    /** Accounts named on a form must belong to the company. */
+    private function assertAccountsBelongToCompany(array $accountIds, int $companyId): void
+    {
+        $ids = collect($accountIds)->unique()->values();
+
+        if (\App\Models\Account::whereIn('id', $ids)->where('company_id', $companyId)->count() !== $ids->count()) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'accrued_account_id' => __('validation.exists', ['attribute' => 'account']),
+            ]);
+        }
     }
 }

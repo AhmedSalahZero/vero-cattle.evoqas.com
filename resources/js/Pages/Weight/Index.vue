@@ -19,7 +19,7 @@
 import { ref, computed, watch } from 'vue'
 import { useForm, router, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 import axios from 'axios'
 
@@ -121,19 +121,23 @@ const formA = useForm({
     farm_id:         '',
     lot_id:          '',
     animal_id:       '',
-    date:            new Date().toISOString().slice(0, 10),
+    date:            localToday(),
     weight_kg:       '',
     scale_reference: '',
     session_ref:     '',
     notes:           '',
 })
 
+// QA-045: only the newest answer may fill the animal list (a slow answer for the previous lot is ignored)
+let lotAnimalsReqA = 0
 watch(() => formA.lot_id, async (lotId) => {
+    const myReq = ++lotAnimalsReqA
     panelAAnimals.value = []
     formA.animal_id = ''
     if (!lotId) return
     try {
         const { data } = await axios.get(route('weights.lot-animals', lotId))
+        if (myReq !== lotAnimalsReqA) return
         panelAAnimals.value = data.animals ?? []
     } catch {
         panelAAnimals.value = []
@@ -142,7 +146,7 @@ watch(() => formA.lot_id, async (lotId) => {
 
 function openPanelA() {
     formA.reset()
-    formA.date = new Date().toISOString().slice(0, 10)
+    formA.date = localToday()
     panelAAnimals.value = []
     panelA.value = true
 }
@@ -157,7 +161,7 @@ function submitA() {
 const panelB        = ref(false)
 const batchAnimals  = ref([])
 const batchLotId    = ref('')
-const batchDate     = ref(new Date().toISOString().slice(0, 10))
+const batchDate     = ref(localToday())
 const batchSession  = ref('')
 const batchScale    = ref('')
 const batchNotes    = ref('')
@@ -165,12 +169,15 @@ const batchReadings = ref([])
 const batchErrors   = ref({})
 const batchLoading  = ref(false)
 
+let lotAnimalsReqB = 0
 watch(batchLotId, async (lotId) => {
+    const myReq = ++lotAnimalsReqB
     batchAnimals.value  = []
     batchReadings.value = []
     if (!lotId) return
     try {
         const { data } = await axios.get(route('weights.lot-animals', lotId))
+        if (myReq !== lotAnimalsReqB) return
         batchAnimals.value  = data.animals ?? []
         batchReadings.value = batchAnimals.value.map(a => ({
             animal_id: a.id,
@@ -185,7 +192,7 @@ watch(batchLotId, async (lotId) => {
 
 function openPanelB() {
     batchLotId.value    = ''
-    batchDate.value     = new Date().toISOString().slice(0, 10)
+    batchDate.value     = localToday()
     batchSession.value  = ''
     batchScale.value    = ''
     batchNotes.value    = ''
@@ -195,6 +202,7 @@ function openPanelB() {
 }
 
 async function submitBatch() {
+    if (batchLoading.value) return          // QA-046: ignore a second click while the first is still being saved
     batchErrors.value = {}
     const filled = batchReadings.value.filter(r => r.weight_kg !== '' && r.weight_kg != null)
     if (!filled.length) {
@@ -205,7 +213,7 @@ async function submitBatch() {
     }
     batchLoading.value = true
     try {
-        await router.post(route('weights.batch'), {
+        router.post(route('weights.batch'), {
             lot_id:          batchLotId.value,
             date:            batchDate.value,
             session_ref:     batchSession.value,
@@ -215,11 +223,14 @@ async function submitBatch() {
         }, {
             onSuccess: () => { panelB.value = false },
             onError:   (e) => { batchErrors.value = e },
+            onFinish:  () => { batchLoading.value = false },
         })
-    } finally {
+    } catch (e) {
         batchLoading.value = false
     }
 }
+// QA-047: every message from the server is listed (before, only one kind was shown)
+const batchErrorList = computed(() => [...new Set(Object.values(batchErrors.value || {}))])
 
 // ── Panel C — Edit single record ───────────────────────────────────
 const panelC     = ref(false)
@@ -699,7 +710,7 @@ function doDelete() {
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'الوزن (كجم) *' : 'Weight (kg) *' }}</label>
                                 <input v-model="formA.weight_kg" class="cv-input" type="number"
-                                       min="0" max="2000" step="0.1"
+                                       min="0.1" max="2000" step="0.1"
                                        :placeholder="lang === 'ar' ? 'مثال: 350.5' : 'e.g. 350.5'"
                                        :class="{ 'cv-input-error': formA.errors.weight_kg }" />
                                 <div v-if="formA.errors.weight_kg" class="cv-field-error">{{ formA.errors.weight_kg }}</div>
@@ -841,7 +852,7 @@ function doDelete() {
                                         <td><span style="font-size:0.8rem;color:var(--cv-text-muted)">{{ row.breed || '—' }}</span></td>
                                         <td>
                                             <input v-model="row.weight_kg" class="cv-input" type="number"
-                                                   min="0" max="2000" step="0.1"
+                                                   min="0.1" max="2000" step="0.1"
                                                    :placeholder="lang === 'ar' ? 'اتركه فارغاً للتخطي' : 'Leave blank to skip'"
                                                    style="font-size:0.85rem;padding:0.3rem 0.6rem" />
                                         </td>
@@ -849,8 +860,10 @@ function doDelete() {
                                 </tbody>
                             </table>
                         </div>
-                        <div v-if="batchErrors.readings" class="cv-field-error" style="margin-top:0.5rem">
-                            {{ batchErrors.readings }}
+                        <div v-if="batchErrorList.length" class="cv-alert cv-alert-danger" style="margin-top:0.5rem">
+                            <ul style="margin:0;padding-inline-start:1.1rem">
+                                <li v-for="m in batchErrorList" :key="m" style="font-size:.8rem">{{ m }}</li>
+                            </ul>
                         </div>
                     </div>
 
@@ -924,7 +937,7 @@ function doDelete() {
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'الوزن (كجم) *' : 'Weight (kg) *' }}</label>
                                 <input v-model="formC.weight_kg" class="cv-input" type="number"
-                                       min="0" max="2000" step="0.1"
+                                       min="0.1" max="2000" step="0.1"
                                        :class="{ 'cv-input-error': formC.errors.weight_kg }" />
                                 <div v-if="formC.errors.weight_kg" class="cv-field-error">{{ formC.errors.weight_kg }}</div>
                             </div>

@@ -30,7 +30,7 @@
 							</div>
 							<div class="form-grid">
 								<!-- Super Admin company selector -->
-								<div v-if="isSuperAdmin" class="cv-field col-span-2">
+								<div v-if="showCompanyPicker" class="cv-field col-span-2">
 									<label class="cv-label">{{ t.company }} <span
 											style="color:var(--cv-danger-text)">*</span></label>
 									<select v-model="form.company_id" class="cv-select"
@@ -47,14 +47,14 @@
 											style="color:var(--cv-danger-text)">*</span></label>
 									<select v-model="form.customer_id" class="cv-select"
 										:class="{ 'cv-select--error': errors.customer_id }"
-										:disabled="isSuperAdmin && !form.company_id">
+										:disabled="showCompanyPicker && !form.company_id">
 										<option value="">{{ t.selectCustomer }}</option>
 										<option v-for="c in dynamicCustomers" :key="c.id" :value="c.id">
 											{{ n(c, 'name') }}
 										</option>
 									</select>
 									<div v-if="errors.customer_id" class="cv-field-error">{{ errors.customer_id }}</div>
-									<div v-if="isSuperAdmin && !form.company_id"
+									<div v-if="showCompanyPicker && !form.company_id"
 										style="font-size:0.7rem;color:var(--cv-text-muted);margin-top:0.25rem">
 										{{ t.selectCompanyFirst }}
 									</div>
@@ -208,7 +208,7 @@
 import { ref, computed } from 'vue'
 import { Link, useForm, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
 const props = defineProps({
@@ -222,6 +222,9 @@ const { locale: lang, isRtl, n, today } = useLocale()
 const page = usePage()
 const authUser = computed(() => page.props.auth?.user)
 const isSuperAdmin = computed(() => !!authUser.value?.is_super_admin)
+// QA-011: the company dropdown is gone — a Super Admin works inside the company they "Entered".
+// (Only shown if the server ever sends a company list again.)
+const showCompanyPicker = computed(() => isSuperAdmin.value && props.companies.length > 0)
 const isEdit = computed(() => props.mode === 'edit')
 
 const { can } = usePermissions()
@@ -232,7 +235,7 @@ const canSave = computed(() => isEdit.value ? canEdit.value : canCreate.value)
 const form = useForm({
 	company_id: props.invoice?.company_id ?? '',
 	customer_id: props.invoice?.customer_id ?? '',
-	date: props.invoice?.date ?? new Date().toISOString().slice(0, 10),
+	date: props.invoice?.date ?? localToday(),
 	due_date: props.invoice?.due_date ?? '',
 	//	reference: props.invoice?.reference ?? '',
 	description: props.invoice?.description ?? '',
@@ -245,7 +248,11 @@ const errors = computed(() => form.errors)
 
 const dynamicCustomers = ref([...props.customers])
 
+// QA-002/003: only the newest answer may update the form
+let companyReq = 0
+let currencyReq = 0
 async function onCompanyChange() {
+	const myReq = ++companyReq
 	form.customer_id = ''
 	dynamicCustomers.value = []
 	if (!form.company_id) return
@@ -254,6 +261,7 @@ async function onCompanyChange() {
 			headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
 		})
 		const data = await res.json()
+		if (myReq !== companyReq || !res.ok) return
 		dynamicCustomers.value = data.customers ?? []
 	} catch (e) {
 		console.error('Failed to load customers', e)
@@ -277,11 +285,14 @@ async function fetchFxRate(currency) {
 const currencies = ['EGP', 'USD', 'EUR', 'GBP', 'SAR', 'AED', 'KWD', 'QAR', 'CHF', 'JPY']
 
 async function onCurrencyChange() {
-	if (form.currency === 'EGP') {
+	const myReq = ++currencyReq
+	const cur = form.currency
+	if (cur === 'EGP') {
 		form.exchange_rate = 1
 	} else {
 		form.exchange_rate = ''
-		const rate = await fetchFxRate(form.currency)
+		const rate = await fetchFxRate(cur)
+		if (myReq !== currencyReq || form.currency !== cur) return
 		if (rate) form.exchange_rate = rate
 	}
 }

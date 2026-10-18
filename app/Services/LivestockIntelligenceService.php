@@ -60,6 +60,9 @@ class LivestockIntelligenceService
     // 📌 METHODOLOGY REFERENCE: ADG_FCR (#9)
     // ──────────────────────────────────────────────────────────────
 
+    /** Dry-matter % assumed for a feed whose catalogue entry has no value. */
+    private const DEFAULT_DM_PCT = '88';
+
     public function adgFcrForAnimal(int $animalId, int $companyId): array
     {
         $weights = DB::table('weight_records')
@@ -134,6 +137,7 @@ class LivestockIntelligenceService
         $wFinal    = 0;
         $dofSum    = 0;
         $animalCount = $animals->count();
+        $measured    = 0;   // animals with at least two weighings
 
         foreach ($byAnimal as $aid => $recs) {
             if ($recs->count() < 2) continue;
@@ -142,17 +146,23 @@ class LivestockIntelligenceService
             $wInitial += (float) $first->weight_kg;
             $wFinal   += (float) $last->weight_kg;
             $dofSum   += now()->parse($first->date)->diffInDays(now()->parse($last->date));
+            $measured++;
         }
 
-        $avgDof  = $animalCount > 0 ? $dofSum / $animalCount : 0;
+        // Average over the animals that were actually weighed twice — animals with a single
+        // weighing add no gain, so counting them in the divisor would pull ADG down.
+        $avgDof  = $measured > 0 ? $dofSum / $measured : 0;
         $gain    = $wFinal - $wInitial;
-        $adg     = ($avgDof > 0 && $animalCount > 0)
-            ? ($gain / $animalCount) / $avgDof
+        $adg     = ($avgDof > 0 && $measured > 0)
+            ? ($gain / $measured) / $avgDof
             : 0;
 
-        $feedDm = $this->calculateFeedDmForLot($lotId, $companyId);
+        // 📌 METHODOLOGY REFERENCE: ADG_FCR (#9) — dry-matter basis
+        $feed      = $this->calculateFeedDmForLot($lotId, $companyId);
+        $feedDm    = $feed['dm_kg'];
         $totalGain = $wFinal - $wInitial;
-        $fcr    = ($totalGain > 0) ? round($feedDm / $totalGain, 3) : null;
+        // No recorded feed → FCR is unknown (not 0).
+        $fcr       = ($totalGain > 0 && $feedDm > 0) ? round($feedDm / $totalGain, 3) : null;
 
         return [
             'lot_id'         => $lotId,
@@ -163,6 +173,7 @@ class LivestockIntelligenceService
             'days_on_feed'   => (int) $avgDof,
             'adg_kg_day'     => round($adg, 3),
             'feed_dm_total'  => round($feedDm, 2),
+            'feed_dm_assumed'=> $feed['assumed'],
             'fcr'            => $fcr,
         ];
     }
@@ -282,7 +293,7 @@ class LivestockIntelligenceService
         // ── Gross margin ──────────────────────────────────────────
         $grossMargin    = bcsub($revenue, $totalCogs, 4);
         $grossMarginPct = (bccomp($revenue, '0', 4) > 0)
-            ? (float) bcadd(bcdiv(bcmul($grossMargin, '100', 6), $revenue, 6), '0', 2)
+            ? (float) \App\Support\Money::round(bcdiv(bcmul($grossMargin, '100', 6), $revenue, 6), 2)
             : null;
 
         // ── Break-even weight ─────────────────────────────────────
@@ -291,27 +302,27 @@ class LivestockIntelligenceService
             ->value('price_per_kg') ?? '0');
 
         $breakEvenWeight = (bccomp($pricePerKgDw, '0', 4) > 0)
-            ? (float) bcadd(bcdiv($totalCogs, $pricePerKgDw, 6), '0', 2)
+            ? (float) \App\Support\Money::round(bcdiv($totalCogs, $pricePerKgDw, 6), 2)
             : null;
 
         return [
             'animal_id'        => $animalId,
             'tag'              => $animal->tag,
             'costs'            => [
-                'purchase'     => (float) bcadd($purchaseCost,  '0', 2),
-                'feed'         => (float) bcadd($feedCost,      '0', 2),
-                'medicine'     => (float) bcadd($medicineCost,  '0', 2),
-                'vaccination'  => (float) bcadd($vaccCost,      '0', 2),
-                'slaughter'    => (float) bcadd($slaughterCost, '0', 2),
+                'purchase'     => (float) \App\Support\Money::round($purchaseCost, 2),
+                'feed'         => (float) \App\Support\Money::round($feedCost, 2),
+                'medicine'     => (float) \App\Support\Money::round($medicineCost, 2),
+                'vaccination'  => (float) \App\Support\Money::round($vaccCost, 2),
+                'slaughter'    => (float) \App\Support\Money::round($slaughterCost, 2),
                 // 📌 FarmLaborOverheadAbsorption (#48): split into labor + overhead
                 // Previously was a single 'overhead' key from the flat settings rate.
                 // Both keys preserved for backward compatibility with Vue components.
-                'labor'        => (float) bcadd($laborCost,     '0', 2),
-                'overhead'     => (float) bcadd($overheadCost,  '0', 2),
-                'total_cogs'   => (float) bcadd($totalCogs,     '0', 2),
+                'labor'        => (float) \App\Support\Money::round($laborCost, 2),
+                'overhead'     => (float) \App\Support\Money::round($overheadCost, 2),
+                'total_cogs'   => (float) \App\Support\Money::round($totalCogs, 2),
             ],
-            'revenue'          => (float) bcadd($revenue,      '0', 2),
-            'gross_margin'     => (float) bcadd($grossMargin,  '0', 2),
+            'revenue'          => (float) \App\Support\Money::round($revenue, 2),
+            'gross_margin'     => (float) \App\Support\Money::round($grossMargin, 2),
             'gross_margin_pct' => $grossMarginPct,
             'break_even_kg_dw' => $breakEvenWeight,
             'price_per_kg_dw'  => (float) bcadd($pricePerKgDw, '0', 4),
@@ -343,7 +354,7 @@ class LivestockIntelligenceService
 
         $grossMargin = bcsub($totalRevenue, $totalCogs, 4);
         $gmPct       = (bccomp($totalRevenue, '0', 4) > 0)
-            ? (float) bcadd(bcdiv(bcmul($grossMargin, '100', 6), $totalRevenue, 6), '0', 2)
+            ? (float) \App\Support\Money::round(bcdiv(bcmul($grossMargin, '100', 6), $totalRevenue, 6), 2)
             : null;
 
         $avgAdg = $perAnimal->pluck('adg_fcr.adg_kg_day')->filter()->avg();
@@ -369,20 +380,20 @@ class LivestockIntelligenceService
         return [
             'lot_id'           => $lotId,
             'head_count'       => $animalCount,
-            'total_revenue'    => (float) bcadd($totalRevenue, '0', 2),
-            'total_cogs'       => (float) bcadd($totalCogs,    '0', 2),
-            'gross_margin'     => (float) bcadd($grossMargin,  '0', 2),
+            'total_revenue'    => (float) \App\Support\Money::round($totalRevenue, 2),
+            'total_cogs'       => (float) \App\Support\Money::round($totalCogs, 2),
+            'gross_margin'     => (float) \App\Support\Money::round($grossMargin, 2),
             'gross_margin_pct' => $gmPct,
             'avg_adg'          => $avgAdg ? round($avgAdg, 3) : null,
             'avg_fcr'          => $avgFcr ? round($avgFcr, 3) : null,
             'cost_breakdown'   => [
-                'purchase'    => (float) bcadd($bdPurchase,  '0', 2),
-                'feed'        => (float) bcadd($bdFeed,      '0', 2),
-                'medicine'    => (float) bcadd($bdMed,       '0', 2),
-                'vaccination' => (float) bcadd($bdVacc,      '0', 2),
-                'slaughter'   => (float) bcadd($bdSlaughter, '0', 2),
-                'labor'       => (float) bcadd($bdLabor,     '0', 2),   // 📌 #48 new
-                'overhead'    => (float) bcadd($bdOverhead,  '0', 2),   // 📌 #48 new
+                'purchase'    => (float) \App\Support\Money::round($bdPurchase, 2),
+                'feed'        => (float) \App\Support\Money::round($bdFeed, 2),
+                'medicine'    => (float) \App\Support\Money::round($bdMed, 2),
+                'vaccination' => (float) \App\Support\Money::round($bdVacc, 2),
+                'slaughter'   => (float) \App\Support\Money::round($bdSlaughter, 2),
+                'labor'       => (float) \App\Support\Money::round($bdLabor, 2),   // 📌 #48 new
+                'overhead'    => (float) \App\Support\Money::round($bdOverhead, 2),   // 📌 #48 new
             ],
             'animals'          => $perAnimal->toArray(),
         ];
@@ -561,17 +572,38 @@ class LivestockIntelligenceService
      * TODO: add dm_pct column to inventory_items for feed category,
      *       then update this query to join inventory_items instead.
      */
-    private function calculateFeedDmForLot(int $lotId, int $companyId): float
+    private function calculateFeedDmForLot(int $lotId, int $companyId): array
     {
-        $feedDm = DB::table('feed_consumptions as fc')
-            ->join('feed_items as fi', 'fi.id', '=', 'fc.feed_item_id')
+        // 📌 METHODOLOGY REFERENCE: ADG_FCR (#9) — feed dry matter
+        //   DM kg = Σ qty_kg × dm% / 100
+        //   dm% is taken, in this order, from
+        //     1. the feed catalogue entry of the record itself (legacy records)
+        //     2. the feed catalogue entry linked to the inventory item (feed_item_id)
+        //     3. a default of 88 % when neither carries a dry-matter value
+        //        (typical for concentrates and hay) — flagged via 'assumed'.
+        $rows = DB::table('feed_consumptions as fc')
+            ->leftJoin('feed_items as fi_rec', 'fi_rec.id', '=', 'fc.feed_item_id')
+            ->leftJoin('inventory_items as ii', 'ii.id', '=', 'fc.inventory_item_id')
+            ->leftJoin('feed_items as fi_inv', 'fi_inv.id', '=', 'ii.feed_item_id')
             ->where('fc.lot_id', $lotId)
             ->where('fc.company_id', $companyId)
-            ->whereNotNull('fc.feed_item_id')
-            ->selectRaw('SUM(fc.qty_kg * fi.dm_pct / 100) as dm_total')
-            ->value('dm_total');
+            ->get([
+                'fc.qty_kg',
+                DB::raw('COALESCE(fi_rec.dm_pct, fi_inv.dm_pct) as dm_pct'),
+            ]);
 
-        return (float) ($feedDm ?? 0);
+        $dm      = '0';
+        $assumed = false;
+        foreach ($rows as $r) {
+            $pct = $r->dm_pct;
+            if ($pct === null) {
+                $pct     = self::DEFAULT_DM_PCT;
+                $assumed = true;
+            }
+            $dm = bcadd($dm, bcdiv(bcmul((string) $r->qty_kg, (string) $pct, 6), '100', 6), 6);
+        }
+
+        return ['dm_kg' => (float) $dm, 'assumed' => $assumed];
     }
 
     /**

@@ -148,19 +148,19 @@ class BudgetController extends Controller
             'fiscal_year_id'   => 'required|integer|exists:fiscal_years,id',
             'account_id'       => 'required|integer|exists:accounts,id',
             'months'           => 'required|array|size:12',
-            'months.*.month'   => 'required|integer|min:1|max:12',
-            'months.*.amount'  => 'required|numeric|min:0',
+            'months.*.month'   => 'required|integer|min:1|max:12|distinct',
+            'months.*.amount'  => 'required|numeric|min:0|max:999999999999.99',   // QA-076: fits the database column
             'months.*.notes'   => 'nullable|string|max:255',
         ]);
 
         // Guard: fiscal year must be open
         $fy = FiscalYear::findOrFail($validated['fiscal_year_id']);
-        abort_unless($fy->company_id === $companyId, 403);
+        abort_unless((int) $fy->company_id === (int) $companyId, 403);
         abort_unless($fy->status === 'open', 422, __('messages.fiscal_year_not_open'));
 
         // Guard: account must belong to same company
         $account = Account::findOrFail($validated['account_id']);
-        abort_unless($account->company_id === $companyId, 403);
+        abort_unless((int) $account->company_id === (int) $companyId, 403);
 
         DB::transaction(function () use ($validated, $companyId) {
             foreach ($validated['months'] as $m) {
@@ -209,11 +209,11 @@ class BudgetController extends Controller
         $targetFy = FiscalYear::findOrFail($validated['target_fiscal_year_id']);
         $sourceFy = FiscalYear::findOrFail($validated['source_fiscal_year_id']);
 
-        abort_unless($targetFy->company_id === $companyId && $sourceFy->company_id === $companyId, 403);
+        abort_unless((int) $targetFy->company_id === (int) $companyId && (int) $sourceFy->company_id === (int) $companyId, 403);
         abort_unless($targetFy->status === 'open', 422, __('messages.fiscal_year_not_open'));
 
         // Growth multiplier: 1.0 = no growth, 1.10 = 10% growth
-        $multiplier = 1 + (($validated['growth_pct'] ?? 0) / 100);
+        $multiplier = bcadd('1', bcdiv((string) ($validated['growth_pct'] ?? 0), '100', 6), 6);   // bcmath, not float
 
         // Fetch prior year actuals (posted journal lines) grouped by account + month
         $actuals = $this->fetchActuals($companyId, $validated['source_fiscal_year_id'], $sourceFy);
@@ -232,7 +232,7 @@ class BudgetController extends Controller
                     ],
                     [
                         // 📌 BudgetVariancePercent — growth applied to prior actuals
-                        'amount' => round($amount * $multiplier, 2),
+                        'amount' => \App\Support\Money::round(bcmul((string) $amount, $multiplier, 6), 2),
                         'notes'  => 'Copied from prior year actuals',
                     ]
                 );
@@ -266,7 +266,7 @@ class BudgetController extends Controller
         ]);
 
         $fy = FiscalYear::findOrFail($validated['fiscal_year_id']);
-        abort_unless($fy->company_id === $companyId, 403);
+        abort_unless((int) $fy->company_id === (int) $companyId, 403);
         abort_unless($fy->status === 'open', 422, __('messages.fiscal_year_not_open'));
 
         Budget::where('company_id', $companyId)
@@ -295,7 +295,7 @@ class BudgetController extends Controller
             ->join('accounts as a', 'a.id', '=', 'jl.account_id')
             ->where('je.company_id', $companyId)
             ->where('je.fiscal_year_id', $fiscalYearId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->whereIn('a.type', ['revenue', 'cogs', 'expense'])
             ->select(
                 'jl.account_id',

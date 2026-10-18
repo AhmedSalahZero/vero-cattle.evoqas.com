@@ -11,7 +11,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { router, usePage }                  from '@inertiajs/vue3'
 import AuthenticatedLayout                  from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale }                        from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 import { usePermissions }                   from '@/Composables/usePermissions'
 
 defineOptions({ layout: AuthenticatedLayout })
@@ -161,7 +161,7 @@ const selectedCompanyId = ref(
 const activeTab = ref(props.activeTab || 'trial-balance')
 
 // ── Filter state — initialise from props.filters ──────────────────
-const today = new Date().toISOString().slice(0, 10)
+const today = localToday()
 const firstOfMonth = today.slice(0, 8) + '01'
 const firstOfYear  = today.slice(0, 4) + '-01-01'
 
@@ -279,6 +279,15 @@ function varianceClass(val, type = 'expense') {
 // ── Computed report data ──────────────────────────────────────────
 const report = computed(() => props.report)
 
+// QA-073: the report on screen belongs to the tab it was RUN for (props.activeTab). Before, opening another
+// tab while a report was loaded drew that tab with the wrong report's data: for example an empty Balance Sheet
+// with a green "BALANCED ✓" badge and "N/A" everywhere. A tab now shows a report only if it is its own.
+const showReport = computed(() => !!props.report && props.activeTab === activeTab.value)
+
+// QA-079: a refused period (for example "end date before start date") now shows its message above the filters.
+// Before, pressing Run just did nothing.
+const pageErrors = computed(() => [...new Set(Object.values(page.props.errors || {}))])
+
 // P&L convenience
 const plCurrent = computed(() => report.value?.current  || null)
 const plCompare = computed(() => report.value?.compare   || null)
@@ -357,6 +366,11 @@ function printPage() { window.print() }
                 <!-- ═══════════════════════════════════════════════ -->
 
                 <!-- Trial Balance filters -->
+                <div v-if="pageErrors.length" class="cv-alert cv-alert-danger print-hide" style="margin:.75rem 0">
+                    <ul style="margin:0;padding-inline-start:1.1rem">
+                        <li v-for="m in pageErrors" :key="m" style="font-size:.85rem">{{ m }}</li>
+                    </ul>
+                </div>
                 <div v-if="activeTab === 'trial-balance'" class="filter-panel print-hide">
                     <div class="filter-grid">
                         <div class="filter-field">
@@ -500,7 +514,10 @@ function printPage() { window.print() }
                 <!-- ────────────────────────────────────────────── -->
                 <!-- TAB: TRIAL BALANCE (#5 TrialBalance)           -->
                 <!-- ────────────────────────────────────────────── -->
-                <div v-if="activeTab === 'trial-balance' && report" class="report-body">
+                <div v-if="!showReport" class="cv-hint print-hide" style="margin:1rem 0;padding:1rem;border:1px dashed var(--cv-border);border-radius:var(--cv-radius);text-align:center;color:var(--cv-text-muted)">
+                    {{ lang === 'ar' ? 'اختر الفترة ثم اضغط «عرض التقرير».' : 'Choose the period above and press Run to see this report.' }}
+                </div>
+                <div v-if="activeTab === 'trial-balance' && showReport" class="report-body">
                     <!-- Print header -->
                     <div class="print-header">
                         <div class="print-title">{{ ui.tabTb }}</div>
@@ -566,7 +583,7 @@ function printPage() { window.print() }
                 <!-- ────────────────────────────────────────────── -->
                 <!-- TAB: PROFIT & LOSS (#6 ProfitAndLoss)          -->
                 <!-- ────────────────────────────────────────────── -->
-                <div v-if="activeTab === 'profit-loss' && report && plCurrent" class="report-body">
+                <div v-if="activeTab === 'profit-loss' && showReport && plCurrent" class="report-body">
                     <div class="print-header">
                         <div class="print-title">{{ ui.tabPl }}</div>
                         <div class="print-period">{{ report.date_from }} → {{ report.date_to }}</div>
@@ -702,7 +719,7 @@ function printPage() { window.print() }
                 <!-- ────────────────────────────────────────────── -->
                 <!-- TAB: BALANCE SHEET (#7 BalanceSheet)           -->
                 <!-- ────────────────────────────────────────────── -->
-                <div v-if="activeTab === 'balance-sheet' && report" class="report-body">
+                <div v-if="activeTab === 'balance-sheet' && showReport" class="report-body">
                     <div class="print-header">
                         <div class="print-title">{{ ui.tabBs }}</div>
                         <div class="print-period">{{ report.as_of_date }}</div>
@@ -789,14 +806,14 @@ function printPage() { window.print() }
                                 <tbody>
                                     <tr v-for="row in report.equity" :key="'e-' + (row.account_id || row.code)"
                                         class="report-row"
-                                        :class="{ 'ytd-row': row.code === 'RE_YTD', 'bs-group-row': !row.allow_direct_posting && row.code !== 'RE_YTD' }">
+                                        :class="{ 'ytd-row': row.code === 'RE_YTD' || row.code === 'RE_PRIOR', 'bs-group-row': !row.allow_direct_posting && row.code !== 'RE_YTD' && row.code !== 'RE_PRIOR' }">
                                         <td class="col-code code-cell">{{ row.code }}</td>
                                         <td class="col-name"
                                             :style="{ paddingInlineStart: (1 + (row.depth || 0) * 1.25) + 'rem' }">
                                             {{ lang === 'ar' ? (row.name_ar || row.name_en) : (row.name_en || row.name_ar) }}
                                         </td>
                                         <td class="col-num"
-                                            :class="[amtClass(-row.balance), { 'bs-group-num': !row.allow_direct_posting && row.code !== 'RE_YTD' }]">
+                                            :class="[amtClass(-row.balance), { 'bs-group-num': !row.allow_direct_posting && row.code !== 'RE_YTD' && row.code !== 'RE_PRIOR' }]">
                                             {{ fmtAmt(row.balance) }}
                                         </td>
                                     </tr>
@@ -821,7 +838,7 @@ function printPage() { window.print() }
                 <!-- ────────────────────────────────────────────── -->
                 <!-- TAB: CASH FLOW (#8 CashFlow indirect method)   -->
                 <!-- ────────────────────────────────────────────── -->
-                <div v-if="activeTab === 'cash-flow' && report" class="report-body">
+                <div v-if="activeTab === 'cash-flow' && showReport" class="report-body">
                     <div class="print-header">
                         <div class="print-title">{{ ui.tabCf }}</div>
                         <div class="print-period">{{ report.date_from }} → {{ report.date_to }}</div>
@@ -911,7 +928,7 @@ function printPage() { window.print() }
                 <!-- ────────────────────────────────────────────── -->
                 <!-- TAB: GROSS MARGIN RANKING (#11 GrossMargin)    -->
                 <!-- ────────────────────────────────────────────── -->
-                <div v-if="activeTab === 'gross-margin' && report" class="report-body">
+                <div v-if="activeTab === 'gross-margin' && showReport" class="report-body">
                     <div class="print-header">
                         <div class="print-title">{{ ui.tabGm }}</div>
                     </div>
@@ -935,7 +952,7 @@ function printPage() { window.print() }
                             >
                                 <div class="gm-rank-badge">{{ idx + 1 }}</div>
                                 <div class="gm-card-body">
-                                    <div class="gm-lot-name">{{ ui.lotLabel }} #{{ row.lot_id }}</div>
+                                    <div class="gm-lot-name">{{ row.lot_name || (ui.lotLabel + ' #' + row.lot_id) }}</div>
                                     <div class="gm-kpis">
                                         <div class="gm-kpi">
                                             <span class="gm-kpi-label">{{ ui.headCount }}</span>
@@ -1004,7 +1021,7 @@ function printPage() { window.print() }
                 <!-- ────────────────────────────────────────────── -->
                 <!-- TAB: ADG / FCR (#9 ADG_FCR)                   -->
                 <!-- ────────────────────────────────────────────── -->
-                <div v-if="activeTab === 'adg-fcr' && report" class="report-body">
+                <div v-if="activeTab === 'adg-fcr' && showReport" class="report-body">
                     <div class="print-header">
                         <div class="print-title">{{ ui.tabAdg }}</div>
                     </div>
@@ -1022,7 +1039,7 @@ function printPage() { window.print() }
                             <!-- Card header -->
                             <div class="adg-card-header">
                                 <div class="adg-card-title">
-                                    <span v-if="row.lot_id">{{ ui.lotLabel }} #{{ row.lot_id }}</span>
+                                    <span v-if="row.lot_id">{{ row.lot_name || (ui.lotLabel + ' #' + row.lot_id) }}</span>
                                     <span v-if="row.head_count" class="adg-head-count">
                                         · {{ fmt(row.head_count) }} {{ lang === 'ar' ? 'رأس' : 'head' }}
                                     </span>

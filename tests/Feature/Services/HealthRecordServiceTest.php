@@ -114,7 +114,7 @@ class HealthRecordServiceTest extends TestCase
         $record = $this->svc->create($this->makeData([
             'dose'      => 2.0,
             'date'      => '2025-03-15',
-            'diagnosis' => 'Foot rot',
+            'condition' => 'Foot rot',
         ]), $this->companyId);
 
         $this->assertInstanceOf(HealthRecord::class, $record);
@@ -661,7 +661,7 @@ class HealthRecordServiceTest extends TestCase
 
         $this->svc->delete($record);
 
-        $this->assertDatabaseMissing('health_records', ['id' => $id]);
+        $this->assertSoftDeleted('health_records', ['id' => $id]);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -897,8 +897,8 @@ class HealthRecordServiceTest extends TestCase
             'location_id'       => $this->locationId,
             'dose'              => 1.0,
             'date'              => '2025-06-15',
-            'diagnosis'         => 'Routine treatment',
-            'treatment'         => 'Administered medicine',
+            'condition'         => 'Routine treatment',
+            'notes'             => 'Administered medicine',
         ], $overrides);
     }
 

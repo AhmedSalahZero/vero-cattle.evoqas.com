@@ -117,7 +117,7 @@ class PaymentController extends Controller
                 'company_id','date_from','date_to','method',
                 'payment_category','check_status',
             ]),
-            'companies'       => $authUser->is_super_admin ? Company::orderBy('name_en')->get(['id','name_en','name_ar']) : [],
+            'companies'       => [],   // QA-011: no company dropdown — Super Admin works in the "Entered" company
             'suppliers'       => $this->availableSuppliers($companyId ?? ($authUser->company_id ?? null)),
             'customers'       => $this->availableCustomers($companyId ?? ($authUser->company_id ?? null)),
             'bankAccounts'    => $this->availableBankAccounts($companyId ?? ($authUser->company_id ?? null)),
@@ -158,6 +158,17 @@ class PaymentController extends Controller
             $validated['exchange_rate'] = 1.0;
         }
 
+        // QA-014 — the exchange rate must really be applied.
+        // amount is in the payment's own currency; the books are in EGP.
+        $payCurrency = $validated['currency'] ?? 'EGP';
+        if ($payCurrency !== 'EGP' && ! ((float) ($validated['exchange_rate'] ?? 0) > 0)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'exchange_rate' => __('Exchange rate is required for foreign currency payments.'),
+            ]);
+        }
+        $payRate   = $payCurrency === 'EGP' ? '1' : sprintf('%.6F', (float) $validated['exchange_rate']);
+        $amountEgp = \App\Support\Money::round(bcmul((string) $validated['amount'], $payRate, 6), 2);
+
         $this->assertBankNameIfRequired($validated);
         $this->assertExpenseAccountMatchesCategory($validated, $companyId);
 
@@ -181,14 +192,16 @@ class PaymentController extends Controller
         }
 
         if (!empty($allocations)) {
-            $this->assertAllocationsBalance($allocations, $validated['amount']);
+            $this->assertAllocationsBalance(
+                $allocations, (float) $validated['amount'], $category, $payCurrency, $payRate, (int) $companyId
+            );
         }
 
         // ── Balance sufficiency check ─────────────────────────────
         // Always enforced now — bank_account_id is required for all methods
         $this->assertSufficientAccountBalance(
             (int) $validated['bank_account_id'],
-            (float) $validated['amount'],
+            (float) $amountEgp,          // QA-014: the bank/cash account is kept in EGP
             $companyId
         );
 
@@ -289,7 +302,7 @@ class PaymentController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit payments') &&
-             $authUser->company_id === $payment->company_id),
+             (int) $authUser->company_id === (int) $payment->company_id),
             403
         );
 
@@ -357,7 +370,7 @@ class PaymentController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit payments') &&
-             $authUser->company_id === $payment->company_id),
+             (int) $authUser->company_id === (int) $payment->company_id),
             403
         );
 
@@ -473,7 +486,7 @@ class PaymentController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('delete payments') &&
-             $authUser->company_id === $payment->company_id),
+             (int) $authUser->company_id === (int) $payment->company_id),
             403
         );
 
@@ -536,21 +549,47 @@ class PaymentController extends Controller
      * Uses bcmath throughout — float summation of many small decimals
      * accumulates IEEE 754 error that can falsely fail this guard.
      */
-    private function assertAllocationsBalance(array $allocations, float $paymentAmount): void
-    {
+    /**
+     * QA-014 — Σ allocations must equal the payment amount, in the PAYMENT's currency.
+     * Each allocated_amount is entered in the INVOICE's currency (that is what settles the invoice).
+     *   same currency      → used as is
+     *   different currency → allocated × invoice rate ÷ payment rate   (rate = EGP per 1 unit; EGP = 1)
+     * Example: invoice USD 1,000 (rate 49.50) paid in EGP → 1,000 × 49.50 ÷ 1 = EGP 49,500 expected.
+     */
+    private function assertAllocationsBalance(
+        array $allocations, float $paymentAmount, string $category,
+        string $paymentCurrency, string $paymentRate, int $companyId
+    ): void {
+        $ids  = collect($allocations)->pluck('invoice_id')->map(fn ($v) => (int) $v)->all();
+        $model = $category === 'customer_collection' ? ArInvoice::class : ApInvoice::class;
+        $invoices = $model::where('company_id', $companyId)->whereIn('id', $ids)
+            ->get(['id', 'currency', 'exchange_rate'])->keyBy('id');
+
         $sum = '0';
         foreach ($allocations as $alloc) {
-            $sum = bcadd($sum, (string)($alloc['allocated_amount'] ?? 0), 4);
+            $inv = $invoices->get((int) ($alloc['invoice_id'] ?? 0));
+            if (! $inv) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'allocations' => __('One of the selected invoices was not found for this company.'),
+                ]);
+            }
+            $amt = (string) ($alloc['allocated_amount'] ?? 0);
+            $invCurrency = $inv->currency ?: 'EGP';
+            if ($invCurrency !== $paymentCurrency) {
+                $invRate = $invCurrency === 'EGP' ? '1' : sprintf('%.6F', (float) ($inv->exchange_rate ?: 1));
+                $amt = bcdiv(bcmul($amt, $invRate, 8), $paymentRate, 6);
+            }
+            $sum = bcadd($sum, $amt, 6);
         }
 
-        $diff      = bcsub($sum, (string)$paymentAmount, 4);
-        $absDiff   = ltrim($diff, '-');
-        $tolerance = '0.0050';
+        $absDiff   = ltrim(bcsub($sum, sprintf('%.6F', $paymentAmount), 6), '-');
+        $tolerance = $paymentCurrency === 'EGP' && $invoices->every(fn ($i) => ($i->currency ?: 'EGP') === 'EGP')
+            ? '0.0050' : '0.0100';   // a little more room when two currencies are converted
 
-        if (bccomp($absDiff, $tolerance, 4) > 0) {
+        if (bccomp($absDiff, $tolerance, 6) > 0) {
             throw \Illuminate\Validation\ValidationException::withMessages([
                 'allocations' => __('The sum of allocations (:sum) does not match the payment amount (:amount).', [
-                    'sum'    => number_format((float)$sum, 2),
+                    'sum'    => number_format((float) $sum, 2),
                     'amount' => number_format($paymentAmount, 2),
                 ]),
             ]);
@@ -564,7 +603,7 @@ class PaymentController extends Controller
      */
     private function applyPaymentToInvoice($invoice, float $amount, int $companyId): void
     {
-        abort_unless($invoice->company_id === $companyId, 403);
+        abort_unless((int) $invoice->company_id === (int) $companyId, 403);
         abort_if($invoice->status === 'cancelled', 422, __('messages.invoice_cancelled'));
 
         $amountStr  = (string) $amount;
@@ -746,14 +785,14 @@ class PaymentController extends Controller
         $debits = DB::table('journal_lines as jl')
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->where('jl.account_id', $accountId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->where('je.company_id', $companyId)
             ->sum('jl.debit');
 
         $credits = DB::table('journal_lines as jl')
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->where('jl.account_id', $accountId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->where('je.company_id', $companyId)
             ->sum('jl.credit');
 
@@ -802,8 +841,8 @@ class PaymentController extends Controller
         $base = Payment::where('company_id', $companyId);
 
         return [
-            'total_collections'       => (float) bcadd((string)((clone $base)->where('type', 'incoming')->sum('amount') ?? 0), '0', 2),
-            'total_payments'          => (float) bcadd((string)((clone $base)->where('type', 'outgoing')->sum('amount') ?? 0), '0', 2),
+            'total_collections'       => (float) \App\Support\Money::round((string)((clone $base)->where('type', 'incoming')->sum(DB::raw('amount * COALESCE(exchange_rate, 1)')) ?? 0), 2),
+            'total_payments'          => (float) \App\Support\Money::round((string)((clone $base)->where('type', 'outgoing')->sum(DB::raw('amount * COALESCE(exchange_rate, 1)')) ?? 0), 2),
             'checks_in_safe'          => (clone $base)->where('check_status', 'in_safe')->count(),
             'checks_under_collection' => (clone $base)->where('check_status', 'under_collection')->count(),
             'checks_rejected'         => (clone $base)->where('check_status', 'rejected')->count(),
@@ -1047,14 +1086,15 @@ class PaymentController extends Controller
             ->whereIn('status', ['open','partially_paid','overdue'])
             ->with('supplier:id,name_en,name_ar')
             ->orderByDesc('date')
-            ->get(['id','reference','date','due_date','balance','currency','supplier_id'])
+            ->get(['id','reference','date','due_date','balance','currency','exchange_rate','supplier_id'])
             ->map(fn($i) => [
                 'id'        => $i->id,
                 'reference' => $i->reference,
-                'date'      => $i->date,
-                'due_date'  => $i->due_date,
+                'date'      => $this->ymd($i->date),
+                'due_date'  => $this->ymd($i->due_date),
                 'balance'   => $i->balance,
                 'currency'  => $i->currency,
+                'exchange_rate' => $i->exchange_rate,
                 'supplier'  => $i->supplier?->only(['id','name_en','name_ar']),
             ]);
     }
@@ -1066,14 +1106,15 @@ class PaymentController extends Controller
             ->whereIn('status', ['open','partially_paid','overdue'])
             ->with('customer:id,name_en,name_ar')
             ->orderByDesc('date')
-            ->get(['id','reference','date','due_date','balance','currency','customer_id'])
+            ->get(['id','reference','date','due_date','balance','currency','exchange_rate','customer_id'])
             ->map(fn($i) => [
                 'id'        => $i->id,
                 'reference' => $i->reference,
-                'date'      => $i->date,
-                'due_date'  => $i->due_date,
+                'date'      => $this->ymd($i->date),
+                'due_date'  => $this->ymd($i->due_date),
                 'balance'   => $i->balance,
                 'currency'  => $i->currency,
+                'exchange_rate' => $i->exchange_rate,
                 'customer'  => $i->customer?->only(['id','name_en','name_ar']),
             ]);
     }
@@ -1240,7 +1281,11 @@ class PaymentController extends Controller
             return;
         }
 
-        $amount     = (string) $payment->amount;
+        // QA-014: payment->amount is in the payment's own currency; the journal is in EGP.
+        // amount × exchange rate (rate is 1 for EGP), rounded half-up to 2 decimals.
+        $amount     = \App\Support\Money::round(
+            bcmul((string) $payment->amount, (string) (($payment->currency ?? 'EGP') === 'EGP' ? 1 : ($payment->exchange_rate ?: 1)), 6), 2
+        );
         $isOutgoing = $payment->type === 'outgoing';
 
         // ── Resolve contra account ────────────────────────────────
@@ -1279,8 +1324,8 @@ class PaymentController extends Controller
             'status'         => 'posted',
             'posted_at'      => now(),
             'posted_by'      => auth()->id(),
-            'total_debit'    => (float) bcadd($amount, '0', 2),
-            'total_credit'   => (float) bcadd($amount, '0', 2),
+            'total_debit'    => (float) \App\Support\Money::round($amount, 2),
+            'total_credit'   => (float) \App\Support\Money::round($amount, 2),
         ]);
 
         if ($isOutgoing) {
@@ -1289,7 +1334,7 @@ class PaymentController extends Controller
             JournalLine::create([
                 'entry_id'   => $je->id,
                 'account_id' => $contraAccount->id,
-                'debit'      => (float) bcadd($amount, '0', 2),
+                'debit'      => (float) \App\Support\Money::round($amount, 2),
                 'credit'     => 0,
                 'memo'       => $reference,
             ]);
@@ -1297,7 +1342,7 @@ class PaymentController extends Controller
                 'entry_id'   => $je->id,
                 'account_id' => $cashBankAccount->id,
                 'debit'      => 0,
-                'credit'     => (float) bcadd($amount, '0', 2),
+                'credit'     => (float) \App\Support\Money::round($amount, 2),
                 'memo'       => $reference,
             ]);
         } else {
@@ -1305,7 +1350,7 @@ class PaymentController extends Controller
             JournalLine::create([
                 'entry_id'   => $je->id,
                 'account_id' => $cashBankAccount->id,
-                'debit'      => (float) bcadd($amount, '0', 2),
+                'debit'      => (float) \App\Support\Money::round($amount, 2),
                 'credit'     => 0,
                 'memo'       => $reference,
             ]);
@@ -1313,7 +1358,7 @@ class PaymentController extends Controller
                 'entry_id'   => $je->id,
                 'account_id' => $contraAccount->id,
                 'debit'      => 0,
-                'credit'     => (float) bcadd($amount, '0', 2),
+                'credit'     => (float) \App\Support\Money::round($amount, 2),
                 'memo'       => $reference,
             ]);
         }

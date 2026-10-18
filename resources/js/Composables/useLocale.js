@@ -22,6 +22,14 @@
 import { ref, computed, watch } from 'vue'
 import { usePage } from '@inertiajs/vue3'
 
+// ── Local calendar date helper ───────────────────────────────────
+// QA-001: never build "today" with toISOString() — that is the UTC date, which is
+// still "yesterday" between 00:00 and 03:00 in Cairo. Use the device's local date.
+export function localToday() {
+    const d = new Date()
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+}
+
 // ── Helpers ───────────────────────────────────────────────────────
 const STORAGE_KEY = 'vero_locale'
 
@@ -107,7 +115,7 @@ export function useLocale() {
         return obj[enKey] || obj[arKey] || '—'
     }
 
-    const today = new Date().toISOString().split('T')[0]
+    const today = localToday()
 
     return { locale, isRtl, setLocale, toggle, t, n, today }
 }

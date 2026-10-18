@@ -54,6 +54,11 @@
             </div>
 
             <div class="cv-page">
+            <div v-if="saveErrors.length" class="cv-alert cv-alert-danger" style="margin-bottom:1rem">
+                <ul style="margin:0;padding-inline-start:1.1rem">
+                    <li v-for="m in saveErrors" :key="m" style="font-size:.85rem">{{ m }}</li>
+                </ul>
+            </div>
 
                 <!-- ══ READ-ONLY BANNER (closed / locked FY) ══════════════ -->
                 <div
@@ -197,7 +202,7 @@
                                             @click="editingId !== row.account_id && startEdit(row)"
                                             :title="editingId !== row.account_id && canEdit ? (lang === 'ar' ? 'انقر للتعديل' : 'Click to edit') : ''">
                                             <template v-if="editingId === row.account_id">
-                                                <input type="number" v-model="editDraft[m]" class="budget-cell-input"
+                                                <input type="number" max="999999999999.99" v-model="editDraft[m]" class="budget-cell-input"
                                                     min="0" step="1"
                                                     @keyup.enter="saveRow(row)" @keyup.escape="cancelEdit" />
                                             </template>
@@ -304,7 +309,7 @@
                                             @click="editingId !== row.account_id && startEdit(row)"
                                             :title="editingId !== row.account_id && canEdit ? (lang === 'ar' ? 'انقر للتعديل' : 'Click to edit') : ''">
                                             <template v-if="editingId === row.account_id">
-                                                <input type="number" v-model="editDraft[m]" class="budget-cell-input"
+                                                <input type="number" max="999999999999.99" v-model="editDraft[m]" class="budget-cell-input"
                                                     min="0" step="1"
                                                     @keyup.enter="saveRow(row)" @keyup.escape="cancelEdit" />
                                             </template>
@@ -405,7 +410,7 @@
                                             @click="editingId !== row.account_id && startEdit(row)"
                                             :title="editingId !== row.account_id && canEdit ? (lang === 'ar' ? 'انقر للتعديل' : 'Click to edit') : ''">
                                             <template v-if="editingId === row.account_id">
-                                                <input type="number" v-model="editDraft[m]" class="budget-cell-input"
+                                                <input type="number" max="999999999999.99" v-model="editDraft[m]" class="budget-cell-input"
                                                     min="0" step="1"
                                                     @keyup.enter="saveRow(row)" @keyup.escape="cancelEdit" />
                                             </template>
@@ -511,6 +516,7 @@
                                     <option v-for="fy in fiscalYears.filter(f => f.status === 'open')" :key="fy.id" :value="fy.id">{{ fy.year }}</option>
                                 </select>
                                 <div v-if="copyErrors.target_fiscal_year_id" class="cv-field-error">{{ copyErrors.target_fiscal_year_id }}</div>
+                    <div v-for="m in [...new Set(Object.values(copyErrors).filter(Boolean))]" :key="m" v-show="!copyErrors.source_fiscal_year_id && !copyErrors.target_fiscal_year_id" class="cv-field-error">{{ m }}</div>
                             </div>
                             <div class="cv-field">
                                 <label class="cv-label">{{ lang === 'ar' ? 'نسبة النمو % (اختياري)' : 'Growth % (optional)' }}</label>
@@ -740,24 +746,35 @@ const startEdit = (row) => {
     editingId.value = row.account_id
 }
 
-const cancelEdit = () => { editingId.value = null; editDraft.value = {} }
+const cancelEdit = () => { editingId.value = null; editDraft.value = {}; saveErrors.value = [] }
 
+// QA-076: the row stays open until the server has ACCEPTED the amounts. Before, the row closed at once, so a
+// refused save lost everything that was typed and no message was shown anywhere.
+const saveErrors = ref([])
+const saving = ref(false)
 const saveRow = (row) => {
+    if (saving.value) return
     const months = Object.entries(editDraft.value).map(([month, amount]) => ({
         month: parseInt(month), amount: parseFloat(amount) || 0,
     }))
     handleRowSave({ accountId: row.account_id, months })
-    editingId.value = null
 }
 
 // ── Row save (bulkUpsert) ─────────────────────────────────────────
 const handleRowSave = ({ accountId, months }) => {
+    saving.value = true
+    saveErrors.value = []
     router.post(route('budgets.bulk-upsert'), {
         fiscal_year_id: props.fiscalYear.id,
         account_id:     accountId,
         months,
         company_id:     props.selectedCompanyId,
-    }, { preserveScroll: true })
+    }, {
+        preserveScroll: true,
+        onSuccess: () => { editingId.value = null },
+        onError:   (e) => { saveErrors.value = [...new Set(Object.values(e || {}))] },
+        onFinish:  () => { saving.value = false },
+    })
 }
 
 // ── Clear account ─────────────────────────────────────────────────

@@ -69,9 +69,9 @@
 // ══════════════════════════════════════════════════════════════════
 
 import { ref, computed, watch } from 'vue'
-import { useForm, router } from '@inertiajs/vue3'
+import { useForm, router, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
 defineOptions({ layout: AuthenticatedLayout })
@@ -323,6 +323,11 @@ const closePanel = () => { panelMode.value = null; editRecord.value = null }
 const deleteTarget = ref(null)
 const confirmDelete = (record) => { deleteTarget.value = record }
 const closeDelete   = () => { deleteTarget.value = null }
+// QA-060: a refused delete (for example the journal entry is posted) must say why
+const deleteError = computed(() => {
+    const e = usePage().props.errors || {}
+    return e.delete || Object.values(e)[0] || ''
+})
 const doDelete      = () => {
     router.delete(route('vaccinations.destroy', deleteTarget.value.id), {
         onSuccess: closeDelete,
@@ -330,7 +335,7 @@ const doDelete      = () => {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
-const todayStr = () => new Date().toISOString().slice(0, 10)
+const todayStr = () => localToday()
 
 // Cascading lots filtered by farm
 const lotsForFarm = (farmId) =>
@@ -361,7 +366,9 @@ const loadLotAnimals = (lotId) => {
 // We'll use a direct Inertia shared prop pattern — animals fetched via dedicated endpoint
 const animalsInLot = ref([])
 
+let animalsReq = 0   // QA-059: newest answer wins
 const fetchAnimalsForLot = async (lotId) => {
+    const myReq = ++animalsReq
     if (!lotId) { animalsInLot.value = []; return }
     loadingAnimals.value = true
     try {
@@ -373,15 +380,17 @@ const fetchAnimalsForLot = async (lotId) => {
         })
         if (res.ok) {
             const data = await res.json()
+            if (myReq !== animalsReq) return
             animalsInLot.value = data
         } else {
-            // Graceful fallback — derive from current page records
+            if (myReq !== animalsReq) return
             animalsInLot.value = []
         }
     } catch {
+        if (myReq !== animalsReq) return
         animalsInLot.value = []
     } finally {
-        loadingAnimals.value = false
+        if (myReq === animalsReq) loadingAnimals.value = false
     }
 }
 
@@ -413,11 +422,18 @@ function onVaccineLocationChange(form) {
     if (loc) recalcVaccineCost(form, loc)
 }
 
+// QA-057: the server ALWAYS prices a vaccination as stock average cost (WAC) x dose and ignores a typed
+// cost, so the cost box is a read-only preview of the cost PER ANIMAL, rounded to cents like the server,
+// and it now follows the dose (before it only updated when the vaccine/location changed).
+const r2 = (v) => Math.round((v + Number.EPSILON) * 100) / 100
 function recalcVaccineCost(form, loc) {
-    // cost = WAC × dose (auto-calculated, overridable by user)
-    if (loc && form.dose_given_ml > 0) {
-        form.cost = (parseFloat(loc.unit_cost) * parseFloat(form.dose_given_ml)).toFixed(2)
-    }
+    const dose = parseFloat(form.dose_given_ml)
+    form.cost = (loc && dose > 0) ? r2(parseFloat(loc.unit_cost) * dose).toFixed(2) : ''
+}
+function refreshCost(form) {
+    const loc = vaccineLocations(form.inventory_item_id)
+        .find(l => String(l.location_id) === String(form.location_id))
+    recalcVaccineCost(form, loc)
 }
 
 function vacLocLabel(l) {
@@ -445,7 +461,12 @@ watch(() => singleForm.lot_id, (val) => {
     singleForm.animal_id = ''
     fetchAnimalsForLot(val)
 })
+watch(() => [singleForm.dose_given_ml, singleForm.inventory_item_id, singleForm.location_id], () => refreshCost(singleForm))
 
+// QA-058: every message from the server is listed above Save (dose / stock / next-due messages had no place)
+const singleErrorList = computed(() => [...new Set(Object.values(singleForm.errors || {}))])
+const bulkErrorList   = computed(() => [...new Set(Object.values(bulkForm.errors || {}))])
+const editErrorList_  = computed(() => [...new Set(Object.values(editForm.errors || {}))])
 const submitSingle = () => {
     singleForm.post(route('vaccinations.store'), {
         onSuccess: closePanel,
@@ -471,6 +492,7 @@ watch(() => bulkForm.lot_id, (val) => {
     bulkForm.animal_ids = []
     fetchAnimalsForLot(val)
 })
+watch(() => [bulkForm.dose_given_ml, bulkForm.inventory_item_id, bulkForm.location_id], () => refreshCost(bulkForm))
 
 const toggleAnimal = (id) => {
     const idx = bulkForm.animal_ids.indexOf(id)
@@ -533,9 +555,16 @@ const stats = computed(() => {
 })
 
 // ── Next due date status ──────────────────────────────────────────
+// QA-061: whole calendar days, local date. The old sum mixed "midnight UTC" with "now", so for the first
+// hours after midnight something due yesterday was not yet shown as overdue.
+const daysUntil = (dateStr) => {
+    const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number)
+    const [ty, tm, td] = localToday().split('-').map(Number)
+    return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(ty, tm - 1, td)) / 86400000)
+}
 const dueBadge = (record) => {
     if (!record.next_due_date) return null
-    const days = Math.ceil((new Date(record.next_due_date) - new Date()) / 86400000)
+    const days = daysUntil(record.next_due_date)
     if (days < 0) return 'overdue'
     if (days <= 7) return 'soon'
     return null
@@ -887,7 +916,7 @@ const formatCost = (v) => {
                             <div class="field-row-2">
                                 <div class="field-group">
                                     <label class="cv-label">{{ L.lblCost }}</label>
-                                    <input v-model="singleForm.cost" type="number" step="0.01" min="0" class="cv-input" placeholder="0.00" />
+                                    <input v-model="singleForm.cost" type="number" step="0.01" min="0" class="cv-input" placeholder="0.00" readonly style="opacity:.7;cursor:default" />
                                 </div>
                                 <div class="field-group">
                                     <label class="cv-label">{{ L.lblNotes }}</label>
@@ -897,6 +926,11 @@ const formatCost = (v) => {
                         </div>
                     </div>
 
+                    <div v-if="singleErrorList.length" class="cv-alert cv-alert-danger" style="margin:.5rem 1rem 0">
+                        <ul style="margin:0;padding-inline-start:1.1rem">
+                            <li v-for="m in singleErrorList" :key="m" style="font-size:.8rem">{{ m }}</li>
+                        </ul>
+                    </div>
                     <div class="panel-footer">
                         <button class="cv-btn cv-btn-ghost" @click="closePanel">{{ L.btnCancel }}</button>
                         <button
@@ -1054,7 +1088,7 @@ const formatCost = (v) => {
                                 </div>
                                 <div class="field-group">
                                     <label class="cv-label">{{ L.lblCost }}</label>
-                                    <input v-model="bulkForm.cost" type="number" step="0.01" min="0" class="cv-input" placeholder="0.00" />
+                                    <input v-model="bulkForm.cost" type="number" step="0.01" min="0" class="cv-input" placeholder="0.00" readonly style="opacity:.7;cursor:default" />
                                 </div>
                             </div>
 
@@ -1066,6 +1100,11 @@ const formatCost = (v) => {
                         </div>
                     </div>
 
+                    <div v-if="bulkErrorList.length" class="cv-alert cv-alert-danger" style="margin:.5rem 1rem 0">
+                        <ul style="margin:0;padding-inline-start:1.1rem">
+                            <li v-for="m in bulkErrorList" :key="m" style="font-size:.8rem">{{ m }}</li>
+                        </ul>
+                    </div>
                     <div class="panel-footer">
                         <button class="cv-btn cv-btn-ghost" @click="closePanel">{{ L.btnCancel }}</button>
                         <button
@@ -1108,7 +1147,7 @@ const formatCost = (v) => {
                             <!-- 📌 LivestockOperationalCostFlow (#43) §7 — inventory vaccine item for new records -->
                             <div v-if="editRecord?.inventory_item_id" class="field-group">
                                 <label class="cv-label">{{ L.lblVaccine }} <span class="req">*</span></label>
-                                <select v-model="editForm.inventory_item_id" class="cv-select" :class="{'input-error': editForm.errors.inventory_item_id}">
+                                <select v-model="editForm.inventory_item_id" class="cv-select" disabled :class="{'input-error': editForm.errors.inventory_item_id}">
                                     <option value="">{{ L.selectVaccine }}</option>
                                     <option v-for="v in inventoryVaccines" :key="v.id" :value="v.id">
                                         {{ locale==='ar'?(v.name_ar||v.name_en):(v.name_en||v.name_ar) }}
@@ -1129,12 +1168,12 @@ const formatCost = (v) => {
                             <div class="field-row-2">
                                 <div class="field-group">
                                     <label class="cv-label">{{ L.lblDate }} <span class="req">*</span></label>
-                                    <input v-model="editForm.date" type="date" class="cv-input" :class="{'input-error': editForm.errors.date}" />
+                                    <input v-model="editForm.date" type="date" class="cv-input" :disabled="!!editRecord?.inventory_item_id" :class="{'input-error': editForm.errors.date}" />
                                     <p v-if="editForm.errors.date" class="field-error">{{ editForm.errors.date }}</p>
                                 </div>
                                 <div class="field-group">
                                     <label class="cv-label">{{ L.lblDose }}</label>
-                                    <input v-model="editForm.dose_given_ml" type="number" step="0.1" min="0" class="cv-input" placeholder="0.0" />
+                                    <input v-model="editForm.dose_given_ml" type="number" step="0.1" min="0" class="cv-input" placeholder="0.0" :disabled="!!editRecord?.inventory_item_id" />
                                 </div>
                             </div>
 
@@ -1154,7 +1193,7 @@ const formatCost = (v) => {
                             <div class="field-row-2">
                                 <div class="field-group">
                                     <label class="cv-label">{{ L.lblCost }}</label>
-                                    <input v-model="editForm.cost" type="number" step="0.01" min="0" class="cv-input" placeholder="0.00" />
+                                    <input v-model="editForm.cost" type="number" step="0.01" min="0" class="cv-input" placeholder="0.00" :disabled="!!editRecord?.inventory_item_id" />
                                 </div>
                                 <div class="field-group">
                                     <label class="cv-label">{{ L.lblNotes }}</label>
@@ -1164,6 +1203,16 @@ const formatCost = (v) => {
                         </div>
                     </div>
 
+                    <p v-if="editRecord?.inventory_item_id" style="font-size:.75rem;color:var(--cv-text-muted);margin:.5rem 1rem 0">
+                        {{ locale==='ar'
+                            ? 'بعد تسجيل التطعيم يمكن تعديل رقم الدفعة وتاريخ الجرعة التالية والملاحظات فقط. لتغيير التاريخ أو الجرعة أو الصنف: احذف السجل وأدخله من جديد.'
+                            : 'After a vaccination is recorded only the batch number, next due date and notes can be changed. To change the date, dose or vaccine: delete this record and enter it again.' }}
+                    </p>
+                    <div v-if="editErrorList_.length" class="cv-alert cv-alert-danger" style="margin:.5rem 1rem 0">
+                        <ul style="margin:0;padding-inline-start:1.1rem">
+                            <li v-for="m in editErrorList_" :key="m" style="font-size:.8rem">{{ m }}</li>
+                        </ul>
+                    </div>
                     <div class="panel-footer">
                         <button class="cv-btn cv-btn-ghost" @click="closePanel">{{ L.btnCancel }}</button>
                         <button
@@ -1205,10 +1254,11 @@ const formatCost = (v) => {
                             <span class="mx-2">·</span>
                             <span>{{ formatDate(deleteTarget.date) }}</span>
                         </div>
+                         <p v-if="deleteError" class="field-error" style="margin-top:.75rem">{{ deleteError }}</p>
                     </div>
                     <div class="cv-modal-footer">
                         <button class="cv-btn cv-btn-ghost" @click="closeDelete">{{ L.btnCancel }}</button>
-                        <button class="cv-btn cv-btn-danger" @click="doDelete">{{ L.deleteConfirm }}</button>
+                    <button class="cv-btn cv-btn-danger" @click="doDelete">{{ L.deleteConfirm }}</button>
                     </div>
                 </div>
             </div>

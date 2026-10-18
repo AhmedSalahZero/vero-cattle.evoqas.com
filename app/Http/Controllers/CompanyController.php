@@ -80,7 +80,7 @@ class CompanyController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            $authUser->company_id === $company->id,
+            (int) $authUser->company_id === (int) $company->id,
             403
         );
 
@@ -98,7 +98,7 @@ class CompanyController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            $authUser->company_id === $company->id,
+            (int) $authUser->company_id === (int) $company->id,
             403
         );
 
@@ -118,15 +118,22 @@ class CompanyController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            $authUser->company_id === $company->id,
+            (int) $authUser->company_id === (int) $company->id,
             403
         );
 
         $validated = $this->validateCompany($request, $company->id);
 
         // ── max_users is super-admin-only — strip it for non-admins ──
+        // Likewise the commercial terms: a company must not extend its own
+        // subscription or switch itself on / off.
         if (! $authUser->is_super_admin) {
-            unset($validated['max_users']);
+            unset(
+                $validated['max_users'],
+                $validated['is_active'],
+                $validated['subscription_starts_at'],
+                $validated['subscription_ends_at']
+            );
         }
 
         // Handle logo upload
@@ -223,7 +230,7 @@ class CompanyController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            $authUser->company_id === $company->id,
+            (int) $authUser->company_id === (int) $company->id,
             403
         );
 

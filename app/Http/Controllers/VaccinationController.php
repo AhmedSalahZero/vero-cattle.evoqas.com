@@ -140,7 +140,7 @@ class VaccinationController extends Controller
             'location_id'        => 'required|exists:inventory_locations,id',
             'date'               => 'required|date',
             'animal_ids'         => 'required|array|min:1',
-            'animal_ids.*'       => 'required|exists:animals,id',
+            'animal_ids.*'       => 'required|exists:animals,id|distinct',   // QA-062: an animal once per vaccination batch
             'batch_number'       => 'nullable|string|max:255',
             'next_due_date'      => 'nullable|date|after:date',
             'dose_given_ml'      => 'required|numeric|min:0.001',
@@ -216,14 +216,8 @@ class VaccinationController extends Controller
 
             // ── Step 7: Read WAC + compute costs ─────────────────
             $unitCost      = (string) $stockRow->unit_cost;
-            $costPerAnimal = (float) bcadd(
-                bcmul($unitCost, (string) $dosePerAnimal, 4),
-                '0', 2
-            );
-            $totalCost = (float) bcadd(
-                bcmul($unitCost, (string) $totalDose, 4),
-                '0', 2
-            );
+            $costPerAnimal = (float) \App\Support\Money::round(bcmul($unitCost, (string) $dosePerAnimal, 4), 2);
+            $totalCost = (float) \App\Support\Money::round(bcmul($unitCost, (string) $totalDose, 4), 2);
 
             // ── Step 8: Decrement stock ───────────────────────────
             $qtyAfter = (float) bcadd(
@@ -235,7 +229,15 @@ class VaccinationController extends Controller
             // ── Step 9: Insert vaccination records per animal ─────
             $now  = now();
             $rows = [];
-            foreach ($animalIds as $animalId) {
+            // QA-062: the cost of each animal is rounded to cents, so the animals could add up to a few cents
+            // less (or more) than the stock that was taken out and the journal entry. The LAST animal now takes
+            // the cents that remain, so the animal records add up exactly to the total.
+            $costLastAnimal = bcsub(
+                (string) $totalCost,
+                bcmul((string) $costPerAnimal, (string) ($animalCount - 1), 2),
+                2
+            );
+            foreach (array_values($animalIds) as $animalPos => $animalId) {
                 $rows[] = [
                     'company_id'        => $companyId,
                     'farm_id'           => $request->farm_id,
@@ -248,7 +250,7 @@ class VaccinationController extends Controller
                     'batch_number'      => $request->batch_number,
                     'next_due_date'     => $request->next_due_date,
                     'dose_given_ml'     => $dosePerAnimal,
-                    'cost'              => $costPerAnimal,    // WAC-based, not manual
+                    'cost'              => $animalPos === $animalCount - 1 ? (float) $costLastAnimal : $costPerAnimal,    // WAC-based, not manual
                     'administered_by'   => $request->administered_by,
                     'notes'             => $request->notes,
                     'created_at'        => $now,
@@ -319,6 +321,107 @@ class VaccinationController extends Controller
         // Wrap as single-animal batch
         $request->merge(['animal_ids' => [$request->input('animal_id')]]);
         return $this->batchStore($request);
+    }
+
+    // ── Update ────────────────────────────────────────────────────
+    //
+    // The edit panel in Vaccinations/Index.vue calls this route, but the method
+    // was missing — every save ended in a 500 error page.
+    //
+    // Rules (same philosophy as destroy()):
+    //   • LEGACY records (no inventory item) → every plain field may be edited,
+    //     because there is no stock or journal entry behind them.
+    //   • INVENTORY-LINKED records → stock, WAC cost and a posted T4 journal entry
+    //     stand behind them, so dose / cost / date / item / location / animal are
+    //     locked. Only batch_number, next_due_date and notes can change. To correct
+    //     the locked fields the user deletes the record (which already restores stock)
+    //     and records it again.
+    public function update(Request $request, VaccinationRecord $vaccinationRecord)
+    {
+        $authUser = Auth::user();
+
+        abort_unless(
+            $authUser->is_super_admin ||
+            $authUser->hasPermissionTo('edit vaccinations'),
+            403
+        );
+
+        $this->authorizeAnimal($authUser, $vaccinationRecord->animal_id);
+
+        $this->sanitizeNullableFields($request);
+
+        $validated = $request->validate([
+            'batch_number'  => 'nullable|string|max:255',
+            'next_due_date' => 'nullable|date',
+            'notes'         => 'nullable|string',
+            'date'          => 'nullable|date',
+            'dose_given_ml' => 'nullable|numeric|min:0',
+            'cost'          => 'nullable|numeric|min:0',
+        ]);
+
+        $recordDate = $vaccinationRecord->date?->toDateString();
+
+        if ($vaccinationRecord->isLegacy()) {
+            $effectiveDate = $validated['date'] ?? $recordDate;
+            if (!empty($validated['next_due_date']) && $validated['next_due_date'] <= $effectiveDate) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'next_due_date' => 'يجب أن يكون تاريخ الجرعة التالية بعد تاريخ التطعيم / The next due date must be after the vaccination date.',
+                ]);
+            }
+
+            $vaccinationRecord->update(array_filter([
+                'date'          => $validated['date'] ?? null,
+                'dose_given_ml' => $validated['dose_given_ml'] ?? null,
+                'cost'          => $validated['cost'] ?? null,
+            ], fn ($v) => $v !== null) + [
+                'batch_number'  => $validated['batch_number'] ?? null,
+                'next_due_date' => $validated['next_due_date'] ?? null,
+                'notes'         => $validated['notes'] ?? null,
+            ]);
+
+            return back()->with('success', 'تم الحفظ / Saved');
+        }
+
+        // Inventory-linked: refuse any change to the locked fields.
+        $changed = [];
+        if (isset($validated['date']) && $validated['date'] !== $recordDate) {
+            $changed['date'] = true;
+        }
+        if (isset($validated['dose_given_ml'])
+            && bccomp((string) $validated['dose_given_ml'], (string) $vaccinationRecord->dose_given_ml, 3) !== 0) {
+            $changed['dose_given_ml'] = true;
+        }
+        if (isset($validated['cost'])
+            && bccomp((string) $validated['cost'], (string) $vaccinationRecord->cost, 2) !== 0) {
+            $changed['cost'] = true;
+        }
+        foreach (['animal_id', 'lot_id', 'farm_id', 'inventory_item_id', 'location_id'] as $locked) {
+            if ($request->filled($locked) && (int) $request->input($locked) !== (int) $vaccinationRecord->{$locked}) {
+                $changed[$locked] = true;
+            }
+        }
+
+        if ($changed) {
+            $msg = 'لا يمكن تعديل التاريخ أو الجرعة أو التكلفة أو الصنف أو المخزن بعد تسجيل التطعيم (المخزون والقيد المحاسبي مرتبطان به). احذف السجل وأعد تسجيله. / '
+                 . 'Date, dose, cost, item and location cannot be changed once a vaccination is recorded (stock and the journal entry depend on them). Delete the record and enter it again.';
+            throw \Illuminate\Validation\ValidationException::withMessages(
+                array_map(fn () => $msg, $changed)
+            );
+        }
+
+        if (!empty($validated['next_due_date']) && $validated['next_due_date'] <= $recordDate) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'next_due_date' => 'يجب أن يكون تاريخ الجرعة التالية بعد تاريخ التطعيم / The next due date must be after the vaccination date.',
+            ]);
+        }
+
+        $vaccinationRecord->update([
+            'batch_number'  => $validated['batch_number'] ?? null,
+            'next_due_date' => $validated['next_due_date'] ?? null,
+            'notes'         => $validated['notes'] ?? null,
+        ]);
+
+        return back()->with('success', 'تم الحفظ / Saved');
     }
 
     // ── Destroy ───────────────────────────────────────────────────
@@ -399,7 +502,7 @@ class VaccinationController extends Controller
     // 📌 METHODOLOGY REFERENCE: LivestockOperationalCostFlow (#43) §11
     //
     // T4: Dr Livestock WIP (1310) [lot_id stamped]
-    //     Cr Vaccine Inventory (1330)
+    //     Cr Vaccine Inventory (1340)
     //
     // Soft-fails with session warning if accounts or fiscal year missing.
     private function postVaccineJournalEntry(
@@ -416,8 +519,11 @@ class VaccinationController extends Controller
             ->where('allow_direct_posting', true)
             ->first();
 
+        // BUG FIX: this credited 1330 (Medicine Inventory). Vaccines are received into
+        // 1340 (Vaccine Inventory — see InventoryReceiptService), so using 1330 here left
+        // 1340 overstated and 1330 understated every time a vaccine was used.
         $vaccineAccount = Account::where('company_id', $companyId)
-            ->where('code', 'like', '1330%')
+            ->where('code', '1340')
             ->where('allow_direct_posting', true)
             ->first();
 
@@ -438,7 +544,7 @@ class VaccinationController extends Controller
         }
 
         // 📌 BcmathMonetaryPrecision (#39)
-        $amount = (float) bcadd((string) $totalCost, '0', 2);
+        $amount = (float) \App\Support\Money::round((string) $totalCost, 2);
         $period = (int) date('n', strtotime($date));
 
         $je = JournalEntry::create([
@@ -525,7 +631,7 @@ class VaccinationController extends Controller
             'notes'              => $record->notes,
             'is_due_soon'        => $record->next_due_date
                 && $record->next_due_date->isFuture()
-                && $record->next_due_date->diffInDays(now()) <= 7,
+                && now()->diffInDays($record->next_due_date) <= 7,   // earlier→later = positive (Carbon 3)
             'created_at'         => $record->created_at?->format('d M Y'),
         ];
     }
@@ -590,6 +696,6 @@ class VaccinationController extends Controller
     {
         if ($authUser->is_super_admin) return;
         $animal = Animal::findOrFail($animalId);
-        abort_unless($animal->company_id === $authUser->company_id, 403);
+        abort_unless((int) $animal->company_id === (int) $authUser->company_id, 403);
     }
 }

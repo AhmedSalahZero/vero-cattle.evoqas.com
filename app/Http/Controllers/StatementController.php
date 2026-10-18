@@ -79,7 +79,7 @@ class StatementController extends Controller
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->where('jl.account_id', $request->account_id)
             ->where('je.company_id', $companyId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->whereDate('je.date', '<', $request->date_from)
             ->whereNull('jl.deleted_at')
             ->whereNull('je.deleted_at')
@@ -99,7 +99,7 @@ class StatementController extends Controller
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->where('jl.account_id', $request->account_id)
             ->where('je.company_id', $companyId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->whereBetween('je.date', [$request->date_from, $request->date_to])
             ->whereNull('jl.deleted_at')
             ->whereNull('je.deleted_at')
@@ -146,9 +146,9 @@ class StatementController extends Controller
                 'entry_description' => $row->entry_description,
                 'entry_type'        => $row->entry_type,
                 'memo'              => $row->memo,
-                'debit'             => (float) bcadd($d, '0', 2),
-                'credit'            => (float) bcadd($c, '0', 2),
-                'running_balance'   => (float) bcadd($running, '0', 2),
+                'debit'             => (float) \App\Support\Money::round($d, 2),
+                'credit'            => (float) \App\Support\Money::round($c, 2),
+                'running_balance'   => (float) \App\Support\Money::round($running, 2),
                 'foreign_currency'  => $row->foreign_currency,
                 'foreign_amount'    => $row->foreign_amount !== null ? (float) $row->foreign_amount : null,
                 'exchange_rate'     => $row->exchange_rate  !== null ? (float) $row->exchange_rate  : null,
@@ -156,7 +156,7 @@ class StatementController extends Controller
         }
 
         $closing = empty($lines)
-            ? (float) bcadd($opening, '0', 2)
+            ? (float) \App\Support\Money::round($opening, 2)
             : end($lines)['running_balance'];
 
         $statement = [
@@ -171,10 +171,10 @@ class StatementController extends Controller
             ],
             'date_from'    => $request->date_from,
             'date_to'      => $request->date_to,
-            'opening'      => (float) bcadd($opening, '0', 2),
+            'opening'      => (float) \App\Support\Money::round($opening, 2),
             'lines'        => $lines,
-            'total_debit'  => (float) bcadd($totalDebit,  '0', 2),
-            'total_credit' => (float) bcadd($totalCredit, '0', 2),
+            'total_debit'  => (float) \App\Support\Money::round($totalDebit, 2),
+            'total_credit' => (float) \App\Support\Money::round($totalCredit, 2),
             'closing'      => $closing,
         ];
 
@@ -463,8 +463,8 @@ class StatementController extends Controller
         // qty_signed is a model accessor — NOT a DB column.
         // Derive sign from type in SQL using CASE expression.
         $signedExpr = "CASE
-            WHEN type IN ('receipt','transfer_in') THEN qty
-            WHEN type IN ('consumption','transfer_out') THEN -qty
+            WHEN type IN ('receipt','transfer_in','mix_in') THEN qty
+            WHEN type IN ('consumption','transfer_out','mix_out') THEN -qty
             ELSE qty
         END";
 
@@ -521,7 +521,7 @@ class StatementController extends Controller
             $total    = (string)($row->total     ?? '0');
 
             // Derive sign from type — receipt/transfer_in = inbound, consumption/transfer_out = outbound
-            $isInbound = in_array($row->type, ['receipt', 'transfer_in', 'adjustment']);
+            $isInbound = in_array($row->type, ['receipt', 'transfer_in', 'adjustment', 'mix_in']);
             $signed    = $isInbound ? $qty : bcsub('0', $qty, 3);
 
             // 📌 BcmathMonetaryPrecision (#38) — qty at scale=3, value at scale=2
@@ -545,9 +545,9 @@ class StatementController extends Controller
                 'qty_in'             => $isInbound  ? (float) bcadd($qty, '0', 3) : 0.0,
                 'qty_out'            => !$isInbound ? (float) bcadd($qty, '0', 3) : 0.0,
                 'unit_cost'          => (float) bcadd($cost, '0', 4),
-                'total'              => (float) bcadd($total, '0', 2),
+                'total'              => (float) \App\Support\Money::round($total, 2),
                 'running_qty'        => (float) bcadd($runningQty,   '0', 3),
-                'running_value'      => (float) bcadd($runningValue, '0', 2),
+                'running_value'      => (float) \App\Support\Money::round($runningValue, 2),
                 'location_name_en'   => $row->location_name_en,
                 'location_name_ar'   => $row->location_name_ar,
                 'supplier_name_en'   => $row->supplier_name_en,
@@ -556,7 +556,7 @@ class StatementController extends Controller
         }
 
         $closingQty   = empty($lines) ? (float) bcadd($openingQty,   '0', 3) : end($lines)['running_qty'];
-        $closingValue = empty($lines) ? (float) bcadd($openingValue, '0', 2) : end($lines)['running_value'];
+        $closingValue = empty($lines) ? (float) \App\Support\Money::round($openingValue, 2) : end($lines)['running_value'];
 
         $statement = [
             'type'           => 'inventory-statement',
@@ -576,12 +576,12 @@ class StatementController extends Controller
             'date_from'      => $request->date_from,
             'date_to'        => $request->date_to,
             'opening_qty'    => (float) bcadd($openingQty,   '0', 3),
-            'opening_value'  => (float) bcadd($openingValue, '0', 2),
+            'opening_value'  => (float) \App\Support\Money::round($openingValue, 2),
             'lines'          => $lines,
             'total_qty_in'   => (float) bcadd($totalQtyIn,  '0', 3),
             'total_qty_out'  => (float) bcadd($totalQtyOut, '0', 3),
-            'total_value_in' => (float) bcadd($totalValIn,  '0', 2),
-            'total_val_out'  => (float) bcadd($totalValOut, '0', 2),
+            'total_value_in' => (float) \App\Support\Money::round($totalValIn, 2),
+            'total_val_out'  => (float) \App\Support\Money::round($totalValOut, 2),
             'closing_qty'    => $closingQty,
             'closing_value'  => $closingValue,
         ];
@@ -631,7 +631,7 @@ class StatementController extends Controller
             $running       = bcsub($running,       (string) $row['payment_amount'], 2);
             $totalInvoiced = bcadd($totalInvoiced, (string) $row['invoice_amount'], 2);
             $totalPaid     = bcadd($totalPaid,     (string) $row['payment_amount'], 2);
-            $row['running_balance'] = (float) bcadd($running, '0', 2);
+            $row['running_balance'] = (float) \App\Support\Money::round($running, 2);
         }
         unset($row);
 
@@ -651,8 +651,8 @@ class StatementController extends Controller
             'date_to'         => $dateTo,
             'opening'         => $opening,
             'rows'            => $allRows,
-            'total_invoiced'  => (float) bcadd($totalInvoiced, '0', 2),
-            'total_paid'      => (float) bcadd($totalPaid,     '0', 2),
+            'total_invoiced'  => (float) \App\Support\Money::round($totalInvoiced, 2),
+            'total_paid'      => (float) \App\Support\Money::round($totalPaid, 2),
             'closing'         => empty($allRows) ? $opening : end($allRows)['running_balance'],
         ];
     }

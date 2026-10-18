@@ -100,7 +100,7 @@ function lotPct(head) {
 
 // ── Alert total ───────────────────────────────────────────────────
 const totalAlerts = computed(() =>
-    (alrt.value.slaughter_due_30d     ?? 0) +
+    (alrt.value.lots_due_for_sale_30d ?? 0) +
     (alrt.value.vaccinations_due_7d   ?? 0) +
     (alrt.value.animals_in_quarantine ?? 0) +
     (alrt.value.withdrawal_pending    ?? 0) +
@@ -183,8 +183,8 @@ const generatedAt = computed(() => {
                     {{ totalAlerts }} {{ t('active alerts require attention', 'تنبيه يستوجب المتابعة') }}
                 </span>
                 <div class="dash-alerts-pills">
-                    <span v-if="alrt.slaughter_due_30d" class="dash-alert-pill dash-alert-pill-amber">
-                        🐄 {{ alrt.slaughter_due_30d }} {{ t('due for slaughter', 'موعد الذبح') }}
+                    <span v-if="alrt.lots_due_for_sale_30d" class="dash-alert-pill dash-alert-pill-amber">
+                        🐄 {{ alrt.lots_due_for_sale_30d }} {{ t('due for sale', 'موعد البيع') }}
                     </span>
                     <span v-if="alrt.vaccinations_due_7d" class="dash-alert-pill dash-alert-pill-blue">
                         💉 {{ alrt.vaccinations_due_7d }} {{ t('vaccinations due', 'تطعيمات مستحقة') }}
@@ -436,12 +436,12 @@ const generatedAt = computed(() => {
                 <div class="dash-alert-grid">
 
                     <Link
-                        v-if="alrt.slaughter_due_30d"
+                        v-if="alrt.lots_due_for_sale_30d"
                         :href="route('lots.index')"
                         class="cv-card cv-card-stripe-amber cv-card-clickable dash-alert-card"
                     >
-                        <div class="dash-alert-card-num" style="color:var(--cv-amber-text)">{{ alrt.slaughter_due_30d }}</div>
-                        <div class="dash-alert-card-label">{{ t('Animals due for slaughter within 30 days', 'ماشيةات موعد ذبحها خلال 30 يومًا') }}</div>
+                        <div class="dash-alert-card-num" style="color:var(--cv-amber-text)">{{ alrt.lots_due_for_sale_30d }}</div>
+                        <div class="dash-alert-card-label">{{ t('Animals due for sale within 30 days', 'ماشية موعد بيعها خلال 30 يومًا') }}</div>
                         <div class="dash-alert-card-action">{{ t('View Lots →', 'عرض ال مجموعات ←') }}</div>
                     </Link>
 

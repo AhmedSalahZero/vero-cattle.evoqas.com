@@ -421,7 +421,14 @@ const isLand = computed(() => form.category === 'land')
 // When category switches to land: lock dep method, zero salvage,
 // and mirror the asset account into both dep account fields so the
 // NOT NULL DB constraint is satisfied (land never posts depreciation).
-watch(() => form.category, (cat) => {
+watch(() => form.category, (cat, prevCat) => {
+  // QA-023: leaving Land must undo what Land did — otherwise the asset keeps "no depreciation" and the
+  // asset account silently stays selected as its own depreciation accounts.
+  if (prevCat === 'land' && cat !== 'land') {
+    if (form.depreciation_method === 'none') form.depreciation_method = 'straight_line'
+    if (form.acc_dep_account_id === form.asset_account_id) form.acc_dep_account_id = ''
+    if (form.dep_expense_account_id === form.asset_account_id) form.dep_expense_account_id = ''
+  }
   if (cat === 'land') {
     form.depreciation_method  = 'none'
     form.salvage_value        = 0

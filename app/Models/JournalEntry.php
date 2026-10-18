@@ -26,6 +26,7 @@ class JournalEntry extends Model
         'posted_by',
         'posted_at',
         'notes',
+        'reversal_of_id',   // new migration — links a reversal to the entry it cancels
     ];
 
     protected $casts = [

@@ -154,7 +154,7 @@ class CustomerController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit customers') &&
-             $authUser->company_id === $customer->company_id),
+             (int) $authUser->company_id === (int) $customer->company_id),
             403
         );
 
@@ -180,7 +180,7 @@ class CustomerController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit customers') &&
-             $authUser->company_id === $customer->company_id),
+             (int) $authUser->company_id === (int) $customer->company_id),
             403
         );
 
@@ -211,7 +211,7 @@ class CustomerController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit customers') &&
-             $authUser->company_id === $customer->company_id),
+             (int) $authUser->company_id === (int) $customer->company_id),
             403
         );
 
@@ -228,7 +228,7 @@ class CustomerController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('delete customers') &&
-             $authUser->company_id === $customer->company_id),
+             (int) $authUser->company_id === (int) $customer->company_id),
             403
         );
 

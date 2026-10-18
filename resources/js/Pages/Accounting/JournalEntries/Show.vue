@@ -25,7 +25,7 @@
 import { ref, computed } from 'vue'
 import { Link, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 
 const { locale: lang, isRtl, n } = useLocale()
 
@@ -177,7 +177,7 @@ const confirmPost = () => {
 const revModal  = ref(false)
 const revForm   = ref({ reversal_date: '', reversal_description: '' })
 const openRev   = () => {
-    revForm.value = { reversal_date: new Date().toISOString().slice(0, 10), reversal_description: '' }
+    revForm.value = { reversal_date: localToday(), reversal_description: '' }
     revModal.value = true
 }
 const confirmRev = () => {

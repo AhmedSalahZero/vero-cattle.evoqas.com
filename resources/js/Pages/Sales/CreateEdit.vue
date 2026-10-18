@@ -34,7 +34,7 @@
 import { ref, computed, watch } from 'vue'
 import { useForm, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 
 const { locale: lang, isRtl, n, today } = useLocale()
 
@@ -72,7 +72,11 @@ const farmAnimals = ref([])   // full list from API
 const loadingAnimals = ref(false)
 const animalLoadError = ref('')
 
+// QA-020: only the newest answer may fill the animal list (a slow answer for the previous farm
+// or sale type must not overwrite it)
+let animalsReq = 0
 async function loadAnimals() {
+	const myReq = ++animalsReq
 	const farmId = form.farm_id
 	if (!farmId) { farmAnimals.value = []; return }
 
@@ -95,6 +99,7 @@ async function loadAnimals() {
 		})
 		if (!res.ok) throw new Error(res.statusText)
 		const fetched = await res.json()
+		if (myReq !== animalsReq) return
 
 		// ── EDIT MODE: merge saved-line animals that may no longer appear
 		// in the API list (e.g. animal status changed after the sale was saved).
@@ -122,10 +127,11 @@ async function loadAnimals() {
 
 		farmAnimals.value = fetched
 	} catch (e) {
+		if (myReq !== animalsReq) return
 		farmAnimals.value = []
 		animalLoadError.value = lang.value === 'ar' ? 'تعذر تحميل الماشيةات' : 'Failed to load animals'
 	} finally {
-		loadingAnimals.value = false
+		if (myReq === animalsReq) loadingAnimals.value = false
 	}
 }
 
@@ -150,7 +156,7 @@ const batchPricePerKg = ref('')    // used when batchPricingMode === 'per_kg'
 const form = useForm({
 	farm_id: props.sale?.farm_id ? Number(props.sale.farm_id) : '',
 	customer_id: props.sale?.customer_id ? Number(props.sale.customer_id) : '',
-	date: props.sale?.date ?? new Date().toISOString().slice(0, 10),
+	date: props.sale?.date ?? localToday(),
 	invoice_ref: props.sale?.invoice_ref ?? '',
 	payment_terms_days: props.sale?.payment_terms_days ?? 30,
 	due_date: props.sale?.due_date ?? '',
@@ -220,13 +226,20 @@ watch(saleType, () => {
 })
 
 // ── Auto-compute due_date ─────────────────────────────────────────
+// QA-019: add days using the LOCAL calendar (not UTC), accept 0 days, and never overwrite the
+// saved due date just because an existing sale was opened for editing.
+function dueDateFrom(date, terms) {
+	const days = parseInt(terms)
+	if (!date || Number.isNaN(days)) return ''
+	const [y, m, dd] = String(date).slice(0, 10).split('-').map(Number)
+	const d = new Date(y, m - 1, dd + days)
+	return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+}
+if (!form.due_date) form.due_date = dueDateFrom(form.date, form.payment_terms_days)
 watch([() => form.date, () => form.payment_terms_days], ([date, terms]) => {
-	if (date && terms) {
-		const d = new Date(date)
-		d.setDate(d.getDate() + parseInt(terms))
-		form.due_date = d.toISOString().slice(0, 10)
-	}
-}, { immediate: true })
+	const due = dueDateFrom(date, terms)
+	if (due) form.due_date = due
+})
 
 // ─────────────────────────────────────────────────────────────────
 //  BATCH COMPUTATIONS
@@ -267,10 +280,10 @@ function batchHeadPrice(animal) {
 // Total for batch sale
 const batchTotal = computed(() => {
 	if (batchPricingMode.value === 'total') {
-		return parseFloat(batchTotalAmount.value) || 0
+		return r2(parseFloat(batchTotalAmount.value) || 0)
 	}
-	// per_kg path: Σ(P_kg × w_i)
-	return selectedAnimals.value.reduce((s, a) => s + batchHeadPrice(a), 0)
+	// per_kg path: Σ round(P_kg × w_i)
+	return r2(selectedAnimals.value.reduce((s, a) => s + r2(batchHeadPrice(a)), 0))
 })
 
 // ─────────────────────────────────────────────────────────────────
@@ -293,21 +306,25 @@ function onAnimalSelected(line) {
 	}
 }
 
+// QA-017: round to cents (half up) EXACTLY like the server does, line by line
+const r2 = (v) => Math.round((v + Number.EPSILON) * 100) / 100
+
 // 📌 METHODOLOGY REFERENCE: ROIperLot — individual line total
 function lineTotal(line) {
 	if (line.pricing_mode === 'per_kg') {
 		const p = parseFloat(line.price_per_kg)
 		const q = parseFloat(line.qty_kg)
-		if (p > 0 && q > 0) return p * q
+		if (p > 0 && q > 0) return r2(p * q)
 	} else {
 		const p = parseFloat(line.price_per_head)
-		if (p > 0) return p
+		if (p > 0) return r2(p)
 	}
 	return 0
 }
 
+// subtotal = Σ of the (already rounded) line totals — same as the server
 const individualSubtotal = computed(() =>
-	form.lines.reduce((s, l) => s + lineTotal(l), 0)
+	r2(form.lines.reduce((s, l) => s + lineTotal(l), 0))
 )
 
 // ─────────────────────────────────────────────────────────────────
@@ -326,15 +343,22 @@ const totalAmount = computed(() => Math.max(0, subtotal.value - discountAmt.valu
 // ─────────────────────────────────────────────────────────────────
 function buildLinesFromBatch() {
 	const pkg = batchDerivedPricePerKg.value
-	return selectedAnimals.value.map(animal => ({
+	const rows = selectedAnimals.value.map(animal => ({
 		animal_id: animal.id,
 		slaughter_id: animal.slaughter_id ?? '',
 		pricing_mode: 'per_head',
 		price_per_kg: Number(pkg.toFixed(4)),
-		price_per_head: Number(batchHeadPrice(animal).toFixed(2)),
+		price_per_head: r2(batchHeadPrice(animal)),
 		qty_kg: animal.weight_kg,
 		notes: '',
 	}))
+	// QA-017: when the user typed a TOTAL, the rounded per-head prices can be a cent or two off it.
+	// Put the difference on the last animal so the lines add up to exactly the typed total.
+	if (batchPricingMode.value === 'total' && rows.length) {
+		const diff = r2(batchTotal.value - rows.reduce((s, r) => s + r.price_per_head, 0))
+		rows[rows.length - 1].price_per_head = r2(rows[rows.length - 1].price_per_head + diff)
+	}
+	return rows
 }
 
 // ─────────────────────────────────────────────────────────────────

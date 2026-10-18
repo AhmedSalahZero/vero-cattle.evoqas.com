@@ -220,7 +220,7 @@ class InventoryReceiptService
                 // ── 3d: Compute line total ────────────────────────
                 // 📌 METHODOLOGY REFERENCE: BcmathMonetaryPrecision (#38)
                 $lineTotal = bcmul($qtyReceiving, $unitCostActual, 4);
-                $lineTotal = bcadd($lineTotal, '0', 2);  // round to cents
+                $lineTotal = \App\Support\Money::round($lineTotal, 2);  // round to cents
 
                 // ── 3e: Compute new WAC ───────────────────────────
                 // 📌 METHODOLOGY REFERENCE: WAC (#10)
@@ -241,7 +241,7 @@ class InventoryReceiptService
                 // ── 3f: Update stock row ──────────────────────────
                 $newQty = bcadd($qtyBefore, $qtyReceiving, 3);
                 $stockRow->qty_on_hand = (float) $newQty;
-                $stockRow->unit_cost   = (float) bcadd($wacNew, '0', 4);
+                $stockRow->unit_cost   = (float) \App\Support\Money::round($wacNew, 4);
                 $stockRow->save();
 
                 // ── 3g: Create inventory transaction ─────────────
@@ -260,7 +260,7 @@ class InventoryReceiptService
                     'unit_cost'     => (float) $unitCostActual,
                     'total'         => (float) $lineTotal,
                     'qty_after'     => (float) $newQty,
-                    'wac_after'     => (float) bcadd($wacNew, '0', 4),
+                    'wac_after'     => (float) \App\Support\Money::round($wacNew, 4),
                     'ref_type'      => 'inventory_receipt_batch',
                     'supplier_id'   => $po->supplier_id,
                     'ref_no'        => $po->po_reference,
@@ -311,7 +311,7 @@ class InventoryReceiptService
                     'total_actual'             => (float) $lineTotal,
                     'inventory_transaction_id' => $txn->id,
                     'wac_before'               => (float) $wacBefore,
-                    'wac_after'                => (float) bcadd($wacNew, '0', 4),
+                    'wac_after'                => (float) \App\Support\Money::round($wacNew, 4),
                     'notes'                    => $lineInput['notes'] ?? null,
                 ];
             }
@@ -576,7 +576,7 @@ class InventoryReceiptService
                     . ' — ' . ($po->supplier?->name_en ?? 'Supplier');
 
         // 📌 BcmathMonetaryPrecision: total_debit = total_credit = batch subtotal
-        $storedAmount = (float) bcadd($batchSubtotal, '0', 2);
+        $storedAmount = (float) \App\Support\Money::round($batchSubtotal, 2);
 
         $je = JournalEntry::create([
             'company_id'     => $companyId,
@@ -600,7 +600,7 @@ class InventoryReceiptService
             JournalLine::create([
                 'entry_id'   => $je->id,
                 'account_id' => $data['account']->id,
-                'debit'      => (float) bcadd($data['amount'], '0', 2),
+                'debit'      => (float) \App\Support\Money::round($data['amount'], 2),
                 'credit'     => 0,
                 'farm_id'    => $po->farm_id,
                 'memo'       => $memo . ' — ' . $code,

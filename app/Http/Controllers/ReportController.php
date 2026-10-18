@@ -215,7 +215,8 @@ class ReportController extends Controller
             ->map(fn($lotId) => $this->livestock->costingForLot($lotId, $companyId))
             ->filter(fn($r) => $r['head_count'] > 0)
             ->sortByDesc('gross_margin')
-            ->values();
+            ->values()
+            ->map(fn($r) => $this->withLotName($r, $companyId));
 
         return Inertia::render('Accounting/Reports/Index', array_merge(
             $this->sharedProps($request, $companyId),
@@ -225,6 +226,18 @@ class ReportController extends Controller
                 'activeTab' => 'gross-margin',
             ]
         ));
+    }
+
+    /** Add the lot's name (what the Lots screen shows) to a report row; the id alone means nothing to a user. */
+    private function withLotName(array $row, int $companyId): array
+    {
+        if (! empty($row['lot_id'])) {
+            $row['lot_name'] = DB::table('lots')
+                ->where('company_id', $companyId)
+                ->where('id', $row['lot_id'])
+                ->value('name');
+        }
+        return $row;
     }
 
     // ── ADG / FCR REPORT ─────────────────────────────────────────
@@ -241,7 +254,7 @@ class ReportController extends Controller
         $companyId = $this->resolveCompany($request);
 
         if ($request->lot_id) {
-            $data = $this->livestock->adgFcrForLot($request->lot_id, $companyId);
+            $data = $this->withLotName($this->livestock->adgFcrForLot($request->lot_id, $companyId), $companyId);
         } else {
             // All active lots — pluck(id) returns a flat collection of IDs
             $lotIds = DB::table('lots')
@@ -250,7 +263,7 @@ class ReportController extends Controller
                 ->pluck('id');
 
             $data = $lotIds
-                ->map(fn($id) => $this->livestock->adgFcrForLot($id, $companyId))
+                ->map(fn($id) => $this->withLotName($this->livestock->adgFcrForLot($id, $companyId), $companyId))
                 ->values();
         }
 
@@ -325,11 +338,8 @@ class ReportController extends Controller
         $user = Auth::user();
 
         return [
-            'companies'   => $user->is_super_admin
-                ? \App\Models\Company::select('id', 'name_en', 'name_ar')
-                    ->orderBy('name_en')
-                    ->get()
-                : [],
+            // QA-074: the server always reports on the company the Super Admin has "Entered"; a chooser here was ignored
+            'companies'   => [],
             'farms'       => $this->availableFarms($companyId),
             'lots'        => $this->availableLots($companyId),
             'fiscalYears' => $this->availableFiscalYears($companyId),

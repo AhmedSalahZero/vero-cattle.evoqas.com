@@ -32,6 +32,11 @@
       <!-- ─────────────────────────────────────────────────────── -->
       <!-- TAB 1 — FINANCIAL RATIOS                               -->
       <!-- ─────────────────────────────────────────────────────── -->
+      <div v-if="pageErrors.length" class="cv-alert cv-alert-danger" style="margin:.75rem 0">
+        <ul style="margin:0;padding-inline-start:1.1rem">
+          <li v-for="m in pageErrors" :key="m" style="font-size:.85rem">{{ m }}</li>
+        </ul>
+      </div>
       <div v-show="activeTab === 'financial-ratios'">
         <!-- Filter bar -->
         <div class="cv-card mb-5 flex flex-wrap gap-4 items-end">
@@ -60,7 +65,7 @@
         </div>
 
         <!-- Results -->
-        <template v-if="activeTab === 'financial-ratios' && report">
+        <template v-if="activeTab === 'financial-ratios' && reportMatches">
           <!-- BS Summary strip -->
           <div class="analytics-kpi-strip">
             <div class="analytics-kpi" v-for="kpi in ratioBsSummary" :key="kpi.key">
@@ -189,7 +194,7 @@
           </button>
         </div>
 
-        <template v-if="activeTab === 'top-customers' && report">
+        <template v-if="activeTab === 'top-customers' && reportMatches">
           <div class="analytics-rank-header mb-3">
             <span style="color:var(--cv-text-muted)">{{ isRtl ? 'إجمالي الإيرادات:' : 'Total Revenue:' }}</span>
             <span style="color:var(--cv-blue-text);font-weight:700;margin-inline-start:8px">{{ fmt(report.grand_total) }} EGP</span>
@@ -244,7 +249,7 @@
           </button>
         </div>
 
-        <template v-if="activeTab === 'top-customers-breed' && report">
+        <template v-if="activeTab === 'top-customers-breed' && reportMatches">
           <div v-if="report.by_breed.length === 0" class="analytics-empty">
             <div class="analytics-empty-icon">🐄</div>
             <div>{{ isRtl ? 'لا توجد بيانات' : 'No data for selected period' }}</div>
@@ -307,7 +312,7 @@
           </button>
         </div>
 
-        <template v-if="activeTab === 'top-suppliers' && report">
+        <template v-if="activeTab === 'top-suppliers' && reportMatches">
           <div class="analytics-rank-header mb-3">
             <span style="color:var(--cv-text-muted)">{{ isRtl ? 'إجمالي المشتريات:' : 'Total Purchases:' }}</span>
             <span style="color:var(--cv-blue-text);font-weight:700;margin-inline-start:8px">{{ fmt(report.grand_total) }} EGP</span>
@@ -365,7 +370,7 @@
           </button>
         </div>
 
-        <template v-if="activeTab === 'top-suppliers-item' && report">
+        <template v-if="activeTab === 'top-suppliers-item' && reportMatches">
           <div v-if="report.by_item.length === 0" class="analytics-empty">
             <div class="analytics-empty-icon">📦</div>
             <div>{{ isRtl ? 'لا توجد بيانات' : 'No receipt data for selected period' }}</div>
@@ -430,7 +435,7 @@
           </button>
         </div>
 
-        <template v-if="activeTab === 'feeding-duration' && report">
+        <template v-if="activeTab === 'feeding-duration' && reportMatches">
 
           <!-- Excluded warning -->
           <div v-if="report.excluded_count > 0" class="cv-card mb-4" style="border-color:var(--cv-amber-border);background:var(--cv-amber-light)">
@@ -521,7 +526,7 @@
 import { ref, computed } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 
 defineOptions({ layout: AuthenticatedLayout })
 
@@ -586,9 +591,15 @@ const activeTab = ref(props.activeTab)
 function setTab(key) {
   activeTab.value = key
 }
+// QA-078: a report belongs to the tab it was RUN for (props.activeTab). Before, opening another tab while a report
+// was loaded tried to draw that tab with the wrong report's data, which crashed the page (blank screen).
+const reportMatches = computed(() => !!props.report && props.activeTab === activeTab.value)
+
+// QA-079: refused periods / filters now show their message (before, pressing Run just did nothing)
+const pageErrors = computed(() => [...new Set(Object.values(usePage().props.errors || {}))])
 
 // ── Filter refs (per tab) ──────────────────────────────────────────
-const today    = new Date().toISOString().slice(0, 10)
+const today    = localToday()
 const yearStart = today.slice(0, 4) + '-01-01'
 
 const ratioFilters = ref({

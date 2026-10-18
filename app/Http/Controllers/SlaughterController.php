@@ -98,6 +98,20 @@ class SlaughterController extends Controller
         abort_unless($companyId > 0, 422, 'Company could not be resolved.');
 
         DB::transaction(function () use ($validated, $companyId) {
+            // Lock the animal and re-check: only an ACTIVE animal can be slaughtered
+            // (not one already sold / slaughtered, nor one reserved by a draft sale).
+            $animal = Animal::lockForUpdate()->findOrFail($validated['animal_id']);
+
+            if ($animal->status !== 'active') {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'animal_id' => __('messages.animal_not_available'),
+                ]);
+            }
+
+            // Farm and lot come from the animal itself, never from the form.
+            $validated['farm_id'] = $animal->farm_id;
+            $validated['lot_id']  = $animal->lot_id;
+
             $record = SlaughterRecord::create([...$validated, 'company_id' => $companyId]);
 
             // Update animal status to slaughtered
@@ -106,6 +120,10 @@ class SlaughterController extends Controller
                     'status'      => 'slaughtered',
                     'status_date' => $validated['date'],
                 ]);
+
+            // The animal leaves its lot on the slaughter date (closes its animal-days)
+            app(\App\Services\AnimalLotHistoryService::class)
+                ->close([(int) $validated['animal_id']], \Illuminate\Support\Carbon::parse($validated['date'])->toDateString(), 'slaughtered');
 
             // ── SLAU-P5-1: Phase 5 hook — COGS recognition + inventory reduction ──────
             // 📌 METHODOLOGY REFERENCE: SaleAndSlaughterStatusLifecycle (#27)
@@ -171,6 +189,12 @@ class SlaughterController extends Controller
         $this->authorizeAnimal($authUser, $slaughterRecord->animal_id);
 
         $validated = $this->validateRecord($request, $slaughterRecord->id);
+
+        // QA-052: an existing record keeps its animal, farm and lot. Before, the form could point the record
+        // at a DIFFERENT animal — the old animal stayed "slaughtered" for ever and the new one stayed "active".
+        $validated['animal_id'] = $slaughterRecord->animal_id;
+        $validated['farm_id']   = $slaughterRecord->farm_id;
+        $validated['lot_id']    = $slaughterRecord->lot_id;
 
         // 📌 METHODOLOGY REFERENCE: DressingPercentage (#19)
         // SLAU-F1: Guard must also run on update — same rule as store()
@@ -243,6 +267,8 @@ class SlaughterController extends Controller
                         'status'      => 'active',
                         'status_date' => null,
                     ]);
+
+                app(\App\Services\AnimalLotHistoryService::class)->reopen([(int) $animalId]);
             }
         });
 
@@ -357,6 +383,6 @@ class SlaughterController extends Controller
     {
         if ($authUser->is_super_admin) return;
         $animal = Animal::findOrFail($animalId);
-        abort_unless($animal->company_id === $authUser->company_id, 403);
+        abort_unless((int) $animal->company_id === (int) $authUser->company_id, 403);
     }
 }

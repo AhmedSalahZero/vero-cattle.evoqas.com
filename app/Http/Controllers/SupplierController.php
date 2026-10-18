@@ -145,7 +145,7 @@ class SupplierController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit suppliers') &&
-             $authUser->company_id === $supplier->company_id),
+             (int) $authUser->company_id === (int) $supplier->company_id),
             403
         );
 
@@ -168,7 +168,7 @@ class SupplierController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit suppliers') &&
-             $authUser->company_id === $supplier->company_id),
+             (int) $authUser->company_id === (int) $supplier->company_id),
             403
         );
 
@@ -199,7 +199,7 @@ class SupplierController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit suppliers') &&
-             $authUser->company_id === $supplier->company_id),
+             (int) $authUser->company_id === (int) $supplier->company_id),
             403
         );
 
@@ -216,7 +216,7 @@ class SupplierController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('delete suppliers') &&
-             $authUser->company_id === $supplier->company_id),
+             (int) $authUser->company_id === (int) $supplier->company_id),
             403
         );
 

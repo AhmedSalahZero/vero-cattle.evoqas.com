@@ -13,7 +13,7 @@
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useForm, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 
 const { locale: lang, isRtl, n } = useLocale()
 
@@ -112,15 +112,29 @@ const selectedCompanyId = ref(props.entry?.company_id ?? '')
 const dynamicFiscalYears = ref([...props.fiscalYears])
 const dynamicAccounts = ref([...props.accounts])
 
+// QA-003/006/008: newest answer wins; failed lookups are ignored; lines picked under the
+// previous company are cleared (their accounts belong to the other company).
+let companyReq = 0
 watch(selectedCompanyId, async (cid) => {
+	const myReq = ++companyReq
 	if (!cid) return
-	const res = await fetch(route('journal-entries.data-for-company') + `?company_id=${cid}`)
-	const data = await res.json()
-	dynamicFiscalYears.value = data.fiscal_years
-	dynamicAccounts.value = data.accounts
+	form.lines.forEach(l => {
+		l.account_id = ''; l.foreign_currency = null; l.foreign_amount = ''
+		l.exchange_rate = 1; l.debit = 0; l.credit = 0
+	})
 	form.fiscal_year_id = ''
 	form.company_id = cid
+	dynamicAccounts.value = []
+	dynamicFiscalYears.value = []
 	initTypeahead()
+	try {
+		const res = await fetch(route('journal-entries.data-for-company') + `?company_id=${cid}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+		if (!res.ok) return
+		const data = await res.json()
+		if (myReq !== companyReq) return
+		dynamicFiscalYears.value = data.fiscal_years ?? []
+		dynamicAccounts.value = data.accounts ?? []
+	} catch (e) { console.error('Failed to load company data', e) }
 })
 
 const isEdit = computed(() => props.mode === 'edit')
@@ -129,7 +143,7 @@ const readOnly = computed(() => isEdit.value && isAutoEntry.value)
 
 // ── Form ──────────────────────────────────────────────────────────
 const form = useForm({
-	date: props.entry?.date ?? new Date().toISOString().slice(0, 10),
+	date: props.entry?.date ?? localToday(),
 	company_id: props.entry?.company_id ?? '',
 	fiscal_year_id: props.entry?.fiscal_year_id ?? '',
 	//    reference:        props.entry?.reference        ?? '',
@@ -166,7 +180,8 @@ const removeLine = (idx) => {
 const totalDebit = computed(() => form.lines.reduce((s, l) => s + (parseFloat(l.debit) || 0), 0))
 const totalCredit = computed(() => form.lines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0))
 const difference = computed(() => Math.abs(totalDebit.value - totalCredit.value))
-const isBalanced = computed(() => difference.value <= 0.005)
+// QA-007: an entry with no amounts at all is not "balanced"
+const isBalanced = computed(() => difference.value <= 0.005 && totalDebit.value > 0)
 
 const formatAmt = (v, decimals = 2) => {
 	const num = parseFloat(v ?? 0)
@@ -265,7 +280,8 @@ const selectAccount = (idx, acc) => {
 		// Auto-fill today's stored rate if one exists
 		if (newCurrency !== 'EGP') {
 			fetchFxRate(newCurrency).then(rate => {
-				if (rate) line.exchange_rate = rate
+				// ignore the answer if the line was changed to another account meanwhile
+				if (rate && line.account_id === acc.id) line.exchange_rate = rate
 			})
 		}
 	}
@@ -458,6 +474,9 @@ const confirmPost = () => {
 					</div>
 					<div></div>
 				</div>
+				<!-- Server messages about the lines as a whole (wrong-company account, debit+credit on one line, …) -->
+				<div v-for="(msg, key) in form.errors" :key="key" v-show="key === 'lines' || /^lines\.\d+\.(debit|credit)$/.test(key)"
+					class="cv-field-error" style="margin-bottom:0.5rem;">{{ msg }}</div>
 				<!-- Lines -->
 				<div v-for="(line, idx) in form.lines" :key="idx" style="margin-bottom:0.75rem;">
 					<!-- Main line row -->

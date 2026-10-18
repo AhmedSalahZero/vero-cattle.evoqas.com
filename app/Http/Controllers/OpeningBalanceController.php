@@ -167,7 +167,9 @@ class OpeningBalanceController extends Controller
 
         $fy = FiscalYear::findOrFail($validated['fiscal_year_id']);
         abort_unless($fy->status === 'open', 422, __('messages.fiscal_year_not_open'));
-        abort_unless($fy->company_id === $companyId, 403);
+        abort_unless((int) $fy->company_id === (int) $companyId, 403);
+        $this->assertDateInYear($validated['date'], $fy);
+        $this->assertRefsBelongToCompany($validated, (int) $companyId);
 
         DB::transaction(function () use ($validated, $companyId, $autoPost, $fy) {
             // 📌 METHODOLOGY REFERENCE: OpeningBalanceEquityPlug
@@ -210,7 +212,7 @@ class OpeningBalanceController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit journal_entries') &&
-             $authUser->company_id === $openingBalance->company_id),
+             (int) $authUser->company_id === (int) $openingBalance->company_id),
             403
         );
 
@@ -242,7 +244,7 @@ class OpeningBalanceController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit journal_entries') &&
-             $authUser->company_id === $openingBalance->company_id),
+             (int) $authUser->company_id === (int) $openingBalance->company_id),
             403
         );
 
@@ -253,6 +255,12 @@ class OpeningBalanceController extends Controller
         $companyId = $openingBalance->company_id;
         $validated = $this->validateWizard($request);
         $autoPost  = (bool) ($validated['auto_post'] ?? false);
+
+        // The year of the entry must still be open and the date must sit inside it.
+        $fy = FiscalYear::findOrFail($openingBalance->fiscal_year_id);
+        abort_unless($fy->status === 'open', 422, __('messages.fiscal_year_not_open'));
+        $this->assertDateInYear($validated['date'], $fy);
+        $this->assertRefsBelongToCompany($validated, (int) $companyId);
 
         DB::transaction(function () use ($openingBalance, $validated, $companyId, $autoPost) {
             // 📌 METHODOLOGY REFERENCE: OpeningBalanceEquityPlug
@@ -292,12 +300,16 @@ class OpeningBalanceController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('create journal_entries') &&
-             $authUser->company_id === $openingBalance->company_id),
+             (int) $authUser->company_id === (int) $openingBalance->company_id),
             403
         );
 
         abort_unless($openingBalance->entry_type === 'opening_balance', 404);
         abort_unless($openingBalance->status === 'draft', 422, __('messages.opening_balance_already_posted'));
+
+        // Re-checked at post time: a year closed since the draft was saved blocks posting.
+        $postFy = FiscalYear::find($openingBalance->fiscal_year_id);
+        abort_unless($postFy && $postFy->status === 'open', 422, __('messages.fiscal_year_not_open'));
 
         $openingBalance->update([
             'status'    => 'posted',
@@ -343,33 +355,33 @@ class OpeningBalanceController extends Controller
             if (!empty($customerRows)) {
                 // Post one line per customer — account total = sum of rows
                 foreach ($customerRows as $cr) {
-                    $cAmount = (float) $cr['amount'];
+                    $cAmount = (string) $cr['amount'];
                     $customer = Customer::find($cr['customer_id']);
                     $lines[] = [
                         'account_id' => (int) $row['account_id'],
-                        'debit'      => $side === 'dr' ? $cAmount : 0,
-                        'credit'     => $side === 'cr' ? $cAmount : 0,
+                        'debit'      => $side === 'dr' ? $cAmount : '0',
+                        'credit'     => $side === 'cr' ? $cAmount : '0',
                         'memo'       => ($customer?->name_en ?? $customer?->name_ar ?? '') . ' — Opening Balance',
                     ];
                 }
             } elseif (!empty($supplierRows)) {
                 foreach ($supplierRows as $sr) {
-                    $sAmount = (float) $sr['amount'];
+                    $sAmount = (string) $sr['amount'];
                     $supplier = Supplier::find($sr['supplier_id']);
                     $lines[] = [
                         'account_id' => (int) $row['account_id'],
-                        'debit'      => $side === 'dr' ? $sAmount : 0,
-                        'credit'     => $side === 'cr' ? $sAmount : 0,
+                        'debit'      => $side === 'dr' ? $sAmount : '0',
+                        'credit'     => $side === 'cr' ? $sAmount : '0',
                         'memo'       => ($supplier?->name_en ?? $supplier?->name_ar ?? '') . ' — Opening Balance',
                     ];
                 }
             } else {
-                $amount = (float) ($row['amount'] ?? 0);
-                if ($amount <= 0) continue;
+                $amount = (string) ($row['amount'] ?? '0');
+                if (bccomp($amount, '0', 2) <= 0) continue;
                 $lines[] = [
                     'account_id' => (int) $row['account_id'],
-                    'debit'      => $side === 'dr' ? $amount : 0,
-                    'credit'     => $side === 'cr' ? $amount : 0,
+                    'debit'      => $side === 'dr' ? $amount : '0',
+                    'credit'     => $side === 'cr' ? $amount : '0',
                     'memo'       => $row['memo'] ?? null,
                 ];
             }
@@ -377,32 +389,36 @@ class OpeningBalanceController extends Controller
 
         // ── Inventory lines (Debit) ───────────────────────────────
         foreach ($validated['inventory_lines'] ?? [] as $row) {
-            $qty   = (float) ($row['qty']       ?? 0);
-            $cost  = (float) ($row['unit_cost']  ?? 0);
-            $value = round($qty * $cost, 2);
-            if ($value <= 0) continue;
+            // 📌 BcmathMonetaryPrecision: value = qty x cost, rounded half-away-from-zero to cents
+            $value = \App\Support\Money::round(bcmul((string) ($row['qty'] ?? '0'), (string) ($row['unit_cost'] ?? '0'), 6), 2);
+            if (bccomp($value, '0', 2) <= 0) continue;
 
             $item = InventoryItem::find($row['item_id']);
             $lines[] = [
                 'account_id' => (int) $row['account_id'],
                 'debit'      => $value,
-                'credit'     => 0,
+                'credit'     => '0',
                 'memo'       => ($item?->name_en ?? $item?->name_ar ?? '') . ' — Opening Stock',
             ];
         }
 
         // ── Equity plug (Retained Earnings) ──────────────────────
         // 📌 OpeningBalanceEquityPlug step C
-        $totalDr = array_sum(array_column($lines, 'debit'));
-        $totalCr = array_sum(array_column($lines, 'credit'));
-        $plug    = round($totalDr - $totalCr, 4);
-        $reId    = $validated['retained_earnings_account_id'] ?? null;
+        $totalDr = '0';
+        $totalCr = '0';
+        foreach ($lines as $l) {
+            $totalDr = bcadd($totalDr, (string) $l['debit'], 4);
+            $totalCr = bcadd($totalCr, (string) $l['credit'], 4);
+        }
+        $plug = bcsub($totalDr, $totalCr, 4);
+        $reId = $validated['retained_earnings_account_id'] ?? null;
 
-        if (abs($plug) > 0.005 && $reId) {
+        if (bccomp(ltrim($plug, '-'), '0.0050', 4) > 0 && $reId) {
+            $isCredit = bccomp($plug, '0', 4) > 0;
             $lines[] = [
                 'account_id' => (int) $reId,
-                'debit'      => $plug < 0 ? abs($plug) : 0,
-                'credit'     => $plug > 0 ? $plug       : 0,
+                'debit'      => $isCredit ? '0' : ltrim($plug, '-'),
+                'credit'     => $isCredit ? $plug : '0',
                 'memo'       => 'Opening Balance — Equity Plug',
             ];
         }
@@ -412,9 +428,9 @@ class OpeningBalanceController extends Controller
 
     private function assertBalanced(array $lines): void
     {
-        $d = array_sum(array_column($lines, 'debit'));
-        $c = array_sum(array_column($lines, 'credit'));
-        if (abs($d - $c) > 0.005) {
+        $totals = $this->lineTotals($lines);
+
+        if (bccomp(ltrim(bcsub((string) $totals['debit'], (string) $totals['credit'], 4), '-'), '0.0050', 4) > 0) {
             throw \Illuminate\Validation\ValidationException::withMessages([
                 'balance' => __('messages.journal_not_balanced'),
             ]);
@@ -423,9 +439,16 @@ class OpeningBalanceController extends Controller
 
     private function lineTotals(array $lines): array
     {
+        $d = '0';
+        $c = '0';
+        foreach ($lines as $l) {
+            $d = bcadd($d, (string) $l['debit'], 4);
+            $c = bcadd($c, (string) $l['credit'], 4);
+        }
+
         return [
-            'debit'  => round(array_sum(array_column($lines, 'debit')),  2),
-            'credit' => round(array_sum(array_column($lines, 'credit')), 2),
+            'debit'  => (float) \App\Support\Money::round($d, 2),
+            'credit' => (float) \App\Support\Money::round($c, 2),
         ];
     }
 
@@ -469,15 +492,62 @@ class OpeningBalanceController extends Controller
         ]);
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // PRIVATE — FORMAT
-    // ══════════════════════════════════════════════════════════════
+    /** The entry date must fall inside its fiscal year. */
+    private function assertDateInYear(string $date, FiscalYear $fy): void
+    {
+        if ($date < $fy->start_date->toDateString() || $date > $fy->end_date->toDateString()) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'date' => __('The date must fall inside the selected fiscal year (:start to :end).', [
+                    'start' => $fy->start_date->toDateString(), 'end' => $fy->end_date->toDateString(),
+                ]),
+            ]);
+        }
+    }
+
+    /**
+     * Every account, customer, supplier and stock item named in the wizard must belong
+     * to the company, and accounts must accept direct posting.
+     */
+    private function assertRefsBelongToCompany(array $validated, int $companyId): void
+    {
+        $accountIds = collect($validated['account_lines'] ?? [])->pluck('account_id')
+            ->merge(collect($validated['inventory_lines'] ?? [])->pluck('account_id'))
+            ->push($validated['retained_earnings_account_id'] ?? null)
+            ->filter()->unique()->values();
+
+        $customerIds = collect($validated['account_lines'] ?? [])->flatMap(fn ($r) => collect($r['customer_rows'] ?? [])->pluck('customer_id'))->unique()->values();
+        $supplierIds = collect($validated['account_lines'] ?? [])->flatMap(fn ($r) => collect($r['supplier_rows'] ?? [])->pluck('supplier_id'))->unique()->values();
+        $itemIds     = collect($validated['inventory_lines'] ?? [])->pluck('item_id')->unique()->values();
+
+        $bad = [];
+
+        if ($accountIds->isNotEmpty()
+            && Account::whereIn('id', $accountIds)->where('company_id', $companyId)->where('allow_direct_posting', true)->count() !== $accountIds->count()) {
+            $bad['account_lines'] = __('validation.exists', ['attribute' => 'account']);
+        }
+        if ($customerIds->isNotEmpty()
+            && Customer::whereIn('id', $customerIds)->where('company_id', $companyId)->count() !== $customerIds->count()) {
+            $bad['customer_rows'] = __('validation.exists', ['attribute' => 'customer']);
+        }
+        if ($supplierIds->isNotEmpty()
+            && Supplier::whereIn('id', $supplierIds)->where('company_id', $companyId)->count() !== $supplierIds->count()) {
+            $bad['supplier_rows'] = __('validation.exists', ['attribute' => 'supplier']);
+        }
+        if ($itemIds->isNotEmpty()
+            && InventoryItem::whereIn('id', $itemIds)->where('company_id', $companyId)->count() !== $itemIds->count()) {
+            $bad['inventory_lines'] = __('validation.exists', ['attribute' => 'item']);
+        }
+
+        if ($bad) {
+            throw \Illuminate\Validation\ValidationException::withMessages($bad);
+        }
+    }
 
     private function formatEntry(JournalEntry $e): array
     {
         return [
             'id'           => $e->id,
-            'date'         => $e->date,
+            'date'         => $this->ymd($e->date),   // QA-030
             'reference'    => $e->reference,
             'description'  => $e->description,
             'status'       => $e->status,

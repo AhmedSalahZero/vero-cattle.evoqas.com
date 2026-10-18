@@ -284,7 +284,7 @@
 import { ref, computed } from 'vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
 defineOptions({ layout: AuthenticatedLayout })
@@ -408,7 +408,7 @@ function matchLabel(inv) {
 }
 
 function apRef(id) { return 'AP-' + String(id).padStart(5, '0') }
-function isPastDue(d) { return d && d < new Date().toISOString().slice(0, 10) }
+function isPastDue(d) { return d && d < localToday() }
 function canEdit(inv)   { return canEditP.value && !['paid', 'cancelled'].includes(inv.status) }
 function canDelete(inv) { return canDeleteP.value && inv.status === 'open' && parseFloat(inv.paid) === 0 }
 

@@ -21,7 +21,7 @@
  *   Farm names resolved via n(farm, 'name').
  *   Arabic mode → ALL words in Arabic.
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useForm, usePage, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import { useLocale } from '@/Composables/useLocale'
@@ -109,14 +109,18 @@ function difficultyLabel(score) {
 const damOptions  = ref([])
 const calfOptions = ref([])
 
+let farmAnimalsReq = 0   // QA-068: newest answer wins
 async function loadFarmAnimals(farmId) {
+    const myReq = ++farmAnimalsReq
     if (!farmId) { damOptions.value = []; calfOptions.value = []; return }
     try {
         const res  = await fetch(`/api/lots-animals?farm_id=${farmId}&status=active`)
         const data = await res.json()
+        if (myReq !== farmAnimalsReq) return
         damOptions.value  = data.filter(a => a.sex === 'female')
         calfOptions.value = data
     } catch {
+        if (myReq !== farmAnimalsReq) return
         damOptions.value = []; calfOptions.value = []
     }
 }
@@ -149,7 +153,11 @@ function openCreate() {
     panelOpen.value  = true
 }
 
+// QA-069: while an existing record is loaded into the form the farm watcher must stay quiet — before, opening
+// Edit cleared the mother AND the calf, and saving then erased the calf link of the calving record.
+let suppressCascade = false
 function openEdit(record) {
+    suppressCascade = true
     form.farm_id            = record.farm_id            ?? ''
     form.dam_id             = record.dam_id             ?? ''
     form.calf_id            = record.calf_id            ?? ''
@@ -166,6 +174,7 @@ function openEdit(record) {
     panelMode.value  = 'edit'
     panelOpen.value  = true
     loadFarmAnimals(record.farm_id)
+    nextTick(() => { suppressCascade = false })
 }
 
 function closePanel() {
@@ -174,6 +183,7 @@ function closePanel() {
 }
 
 watch(() => form.farm_id, (fid) => {
+    if (suppressCascade) return
     form.dam_id  = ''
     form.calf_id = ''
     loadFarmAnimals(fid)

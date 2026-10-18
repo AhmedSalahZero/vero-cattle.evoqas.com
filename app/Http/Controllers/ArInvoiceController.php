@@ -115,7 +115,7 @@ class ArInvoiceController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('view ar_invoices') && $authUser->company_id === $arInvoice->company_id),
+            ($authUser->hasPermissionTo('view ar_invoices') && (int) $authUser->company_id === (int) $arInvoice->company_id),
             403
         );
 
@@ -144,15 +144,20 @@ class ArInvoiceController extends Controller
             403
         );
 
+        // QA-011 (option A): no company dropdown. A Super Admin works inside the company they "Entered".
+        $formCompanyId = $authUser->is_super_admin
+            ? (int) session('selected_company_id', 0)
+            : (int) $authUser->company_id;
+        if ($formCompanyId <= 0) {
+            return redirect()->route('companies.index')
+                ->with('error', 'No company selected. Click Enter on a company first.');
+        }
+
         return Inertia::render('Accounting/ArInvoices/CreateEdit', [
             'mode'      => 'create',
             'invoice'   => null,
-            'customers' => $authUser->is_super_admin
-                ? collect()
-                : $this->availableCustomers($authUser->company_id),
-            'companies' => $authUser->is_super_admin
-                ? Company::where('is_active', true)->orderBy('name_en')->get(['id', 'name_en', 'name_ar'])
-                : collect(),
+            'customers' => $this->availableCustomers($formCompanyId),
+            'companies' => collect(),
         ]);
     }
 
@@ -173,7 +178,7 @@ class ArInvoiceController extends Controller
         $validated = $this->validateInvoice($request);
 
         $customer = Customer::findOrFail($validated['customer_id']);
-        abort_unless($customer->company_id === $companyId, 422, 'Customer does not belong to this company.');
+        abort_unless((int) $customer->company_id === (int) $companyId, 422, 'Customer does not belong to this company.');
 
         // 📌 InvoiceForeignCurrencyBalance
         // Explicitly overwrite $validated so no downstream code can use a wrong rate.
@@ -211,7 +216,7 @@ class ArInvoiceController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit ar_invoices') && $authUser->company_id === $arInvoice->company_id),
+            ($authUser->hasPermissionTo('edit ar_invoices') && (int) $authUser->company_id === (int) $arInvoice->company_id),
             403
         );
 
@@ -224,9 +229,7 @@ class ArInvoiceController extends Controller
             'mode'      => 'edit',
             'invoice'   => $this->formatInvoice($arInvoice),
             'customers' => $this->availableCustomers($companyId),
-            'companies' => $authUser->is_super_admin
-                ? Company::where('is_active', true)->orderBy('name_en')->get(['id', 'name_en', 'name_ar'])
-                : collect(),
+            'companies' => collect(),   // QA-011: no company dropdown
         ]);
     }
 
@@ -237,13 +240,21 @@ class ArInvoiceController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit ar_invoices') && $authUser->company_id === $arInvoice->company_id),
+            ($authUser->hasPermissionTo('edit ar_invoices') && (int) $authUser->company_id === (int) $arInvoice->company_id),
             403
         );
 
         abort_if(in_array($arInvoice->status, ['paid', 'cancelled']), 422, __('messages.invoice_not_editable'));
 
         $validated = $this->validateInvoice($request);
+
+        // QA-012: the customer must belong to this invoice's company (same rule as create)
+        $customer = Customer::find($validated['customer_id']);
+        if (! $customer || (int) $customer->company_id !== (int) $arInvoice->company_id) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'customer_id' => __('Customer does not belong to this company.'),
+            ]);
+        }
 
         // 📌 InvoiceForeignCurrencyBalance
         // Explicitly overwrite $validated to guarantee EGP rate is always 1.0.
@@ -285,7 +296,7 @@ class ArInvoiceController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit ar_invoices') && $authUser->company_id === $arInvoice->company_id),
+            ($authUser->hasPermissionTo('edit ar_invoices') && (int) $authUser->company_id === (int) $arInvoice->company_id),
             403
         );
 
@@ -305,7 +316,7 @@ class ArInvoiceController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('delete ar_invoices') && $authUser->company_id === $arInvoice->company_id),
+            ($authUser->hasPermissionTo('delete ar_invoices') && (int) $authUser->company_id === (int) $arInvoice->company_id),
             403
         );
 
@@ -444,11 +455,11 @@ class ArInvoiceController extends Controller
         ]);
 
         return [
-            'current'  => (float) bcadd((string)($row->current_bucket  ?? 0), '0', 2),
-            '1_30'     => (float) bcadd((string)($row->bucket_1_30     ?? 0), '0', 2),
-            '31_60'    => (float) bcadd((string)($row->bucket_31_60    ?? 0), '0', 2),
-            '61_90'    => (float) bcadd((string)($row->bucket_61_90    ?? 0), '0', 2),
-            'over_90'  => (float) bcadd((string)($row->bucket_over_90  ?? 0), '0', 2),
+            'current'  => (float) \App\Support\Money::round((string)($row->current_bucket  ?? 0), 2),
+            '1_30'     => (float) \App\Support\Money::round((string)($row->bucket_1_30     ?? 0), 2),
+            '31_60'    => (float) \App\Support\Money::round((string)($row->bucket_31_60    ?? 0), 2),
+            '61_90'    => (float) \App\Support\Money::round((string)($row->bucket_61_90    ?? 0), 2),
+            'over_90'  => (float) \App\Support\Money::round((string)($row->bucket_over_90  ?? 0), 2),
         ];
     }
 

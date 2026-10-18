@@ -91,7 +91,7 @@ class JournalEntryController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('view journal_entries') && $authUser->company_id === $journalEntry->company_id),
+            ($authUser->hasPermissionTo('view journal_entries') && (int) $authUser->company_id === (int) $journalEntry->company_id),
             403
         );
 
@@ -120,14 +120,19 @@ class JournalEntryController extends Controller
             403
         );
 
+        // QA-011 (option A): no company dropdown. A Super Admin works inside the company they "Entered".
+        $formCompanyId = $authUser->is_super_admin
+            ? (int) session('selected_company_id', 0)
+            : (int) $authUser->company_id;
+        if ($formCompanyId <= 0) {
+            return redirect()->route('companies.index')
+                ->with('error', 'No company selected. Click Enter on a company first.');
+        }
+
         return Inertia::render('Accounting/JournalEntries/CreateEdit', [
-            'accounts'    => [],
-            'fiscalYears' => $authUser->is_super_admin
-            ? $this->availableFiscalYears($authUser, (int) DB::table('companies')->orderBy('id')->value('id'))
-            : $this->availableFiscalYears($authUser),
-            'companies'   => $authUser->is_super_admin
-                ? Company::orderBy('name_en')->get(['id', 'name_en', 'name_ar'])
-                : collect(),
+            'accounts'    => $this->availableAccounts($authUser, $formCompanyId),
+            'fiscalYears' => $this->availableFiscalYears($authUser, $formCompanyId),
+            'companies'   => collect(),
             'mode'        => 'create',
         ]);
     }
@@ -154,15 +159,18 @@ class JournalEntryController extends Controller
         // 📌 JournalBalanceValidation — Σ debit = Σ credit
         $this->assertBalanced($lines);
 
+        // QA-006/007: lines must use this company's accounts and one side per line
+        $this->assertLinesWellFormed($lines, (int) $companyId);
+
         // 📌 AccountBalanceSufficiencyCheck (#32)
         // Block if any credit line on a 14xx/15xx account exceeds that account's posted balance.
         $this->assertSufficientBalancesForLines($lines, $companyId);
 
-        if (!empty($validated['fiscal_year_id'])) {
-            $fy = FiscalYear::findOrFail($validated['fiscal_year_id']);
-            abort_unless($fy->status === 'open', 422, __('messages.fiscal_year_not_open'));
-            abort_unless($fy->company_id === $companyId, 403);
-        }
+        // The entry must sit in an OPEN fiscal year of this company that covers its date.
+        // When none is chosen the year covering the date is used (never "no year").
+        $validated['fiscal_year_id'] = $this->resolveOpenFiscalYear(
+            (int) $companyId, $validated['fiscal_year_id'] ?? null, $validated['date']
+        )->id;
 
         // ── FIX 5: Auto-generate reference if left blank ──────────
         // 📌 METHODOLOGY REFERENCE: JournalEntryAutoRef (#27)
@@ -170,7 +178,9 @@ class JournalEntryController extends Controller
             ? $validated['reference']
             : $this->generateReference($companyId, $validated['date']);
 
-        DB::transaction(function () use ($validated, $lines, $companyId, $reference) {
+        // QA-005: "Save & Post" — save and post in ONE transaction, so a refusal leaves no stray draft.
+        $postNow = $request->boolean('post_immediately');
+        DB::transaction(function () use ($validated, $lines, $companyId, $reference, $postNow) {
             $totals = $this->lineTotals($lines);
 
             $entry = JournalEntry::create([
@@ -201,10 +211,14 @@ class JournalEntryController extends Controller
                     'exchange_rate'    => $line['exchange_rate']     ?? null,
                 ]);
             }
+
+            if ($postNow) {
+                $this->post($entry->fresh());
+            }
         });
 
         return redirect()->route('journal-entries.index')
-            ->with('success', __('messages.journal_entry_created'));
+            ->with('success', $postNow ? __('messages.journal_entry_posted') : __('messages.journal_entry_created'));
     }
 
     // ── Edit (draft manual entries only) ─────────────────────────
@@ -214,7 +228,7 @@ class JournalEntryController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit journal_entries') && $authUser->company_id === $journalEntry->company_id),
+            ($authUser->hasPermissionTo('edit journal_entries') && (int) $authUser->company_id === (int) $journalEntry->company_id),
             403
         );
 
@@ -238,7 +252,7 @@ class JournalEntryController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit journal_entries') && $authUser->company_id === $journalEntry->company_id),
+            ($authUser->hasPermissionTo('edit journal_entries') && (int) $authUser->company_id === (int) $journalEntry->company_id),
             403
         );
 
@@ -249,16 +263,24 @@ class JournalEntryController extends Controller
         $lines     = $this->validateLines($request);
         $this->assertBalanced($lines); // 📌 JournalBalanceValidation
 
+        // QA-006/007: lines must use this company's accounts and one side per line
+        $this->assertLinesWellFormed($lines, (int) $journalEntry->company_id);
+
         // 📌 AccountBalanceSufficiencyCheck (#32)
         // Exclude the current entry's own lines so we don't double-count the
         // credits that are being replaced by this update.
         $this->assertSufficientBalancesForLines($lines, $journalEntry->company_id, $journalEntry->id);
 
-        DB::transaction(function () use ($journalEntry, $validated, $lines) {
+        $validated['fiscal_year_id'] = $this->resolveOpenFiscalYear(
+            (int) $journalEntry->company_id, $validated['fiscal_year_id'] ?? null, $validated['date']
+        )->id;
+
+        $postNow = $request->boolean('post_immediately');
+        DB::transaction(function () use ($journalEntry, $validated, $lines, $postNow) {
             $totals = $this->lineTotals($lines);
 
             $journalEntry->update([
-                'fiscal_year_id' => $validated['fiscal_year_id'] ?? null,
+                'fiscal_year_id' => $validated['fiscal_year_id'],
                 'date'           => $validated['date'],
                 'reference'      => $validated['reference'] ?? $journalEntry->reference,
                 'description'    => $validated['description'],
@@ -283,10 +305,14 @@ class JournalEntryController extends Controller
                     'exchange_rate'    => $line['exchange_rate']     ?? null,
                 ]);
             }
+
+            if ($postNow) {
+                $this->post($journalEntry->fresh());
+            }
         });
 
         return redirect()->route('journal-entries.show', $journalEntry)
-            ->with('success', __('messages.journal_entry_updated'));
+            ->with('success', $postNow ? __('messages.journal_entry_posted') : __('messages.journal_entry_updated'));
     }
 
     // ── Post (draft → posted) ─────────────────────────────────────
@@ -296,7 +322,7 @@ class JournalEntryController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('post journal_entries') && $authUser->company_id === $journalEntry->company_id),
+            ($authUser->hasPermissionTo('edit journal_entries') && (int) $authUser->company_id === (int) $journalEntry->company_id),   // 'post journal_entries' was never seeded → Spatie threw PermissionDoesNotExist (500) for every non-super-admin
             403
         );
 
@@ -305,20 +331,19 @@ class JournalEntryController extends Controller
         // ✅ BUG-T5 FIX: Re-check fiscal year is still open at post time.
         // A draft entry can be created in an open FY that is later closed.
         // store() checked on creation — post() must check again independently.
-        if ($journalEntry->fiscal_year_id) {
-            $fy = FiscalYear::find($journalEntry->fiscal_year_id);
-            abort_unless(
-                $fy && $fy->status === 'open',
-                422,
-                __('messages.fiscal_year_not_open')
-            );
-        }
+        // Re-checked at post time: the year must still be open and must cover the
+        // entry date (an entry saved without a year is attached to the right one here).
+        $postFy = $this->resolveOpenFiscalYear(
+            (int) $journalEntry->company_id,
+            $journalEntry->fiscal_year_id,
+            $journalEntry->date->toDateString()
+        );
 
         // ✅ RISK-F3 FIX: Wrap in DB::transaction so the balance re-check
         // and the status update are atomic. Without this, a crash between the
         // two operations leaves the entry with an inconsistent state.
         // Phase 5: event dispatch goes INSIDE this transaction.
-        DB::transaction(function () use ($journalEntry, $authUser) {
+        DB::transaction(function () use ($journalEntry, $authUser, $postFy) {
             // Lock lines before re-reading — prevents a concurrent update()
             // from modifying a line between our balance check and the status write.
             $lines = $journalEntry->lines()->lockForUpdate()->get()->map(fn($l) => [
@@ -329,7 +354,12 @@ class JournalEntryController extends Controller
             // 📌 JournalBalanceValidation + BcmathMonetaryPrecision
             $this->assertBalanced($lines);
 
+            // QA-007: never post an entry with no amounts
+            $postTotals = $this->lineTotals($lines);
+            abort_unless($postTotals['debit'] > 0, 422, 'A journal entry with no amounts cannot be posted.');
+
             $journalEntry->update([
+                'fiscal_year_id' => $postFy->id,
                 'status'    => 'posted',
                 'posted_by' => $authUser->id,
                 'posted_at' => now(),
@@ -349,7 +379,7 @@ class JournalEntryController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('post journal_entries') && $authUser->company_id === $journalEntry->company_id),
+            ($authUser->hasPermissionTo('edit journal_entries') && (int) $authUser->company_id === (int) $journalEntry->company_id),   // 'post journal_entries' was never seeded → Spatie threw PermissionDoesNotExist (500) for every non-super-admin
             403
         );
 
@@ -360,10 +390,15 @@ class JournalEntryController extends Controller
             'description' => 'nullable|string|max:255',
         ]);
 
-        DB::transaction(function () use ($journalEntry, $validated, $authUser) {
+        // The reversal is a new posting: it needs an OPEN year covering its own date
+        // (the original may sit in a closed year — the correction goes into an open one).
+        $revFy = $this->resolveOpenFiscalYear((int) $journalEntry->company_id, null, $validated['date']);
+
+        DB::transaction(function () use ($journalEntry, $validated, $authUser, $revFy) {
             $reversal = JournalEntry::create([
                 'company_id'      => $journalEntry->company_id,
-                'fiscal_year_id'  => $journalEntry->fiscal_year_id,
+                'reversal_of_id'  => $journalEntry->id,
+                'fiscal_year_id'  => $revFy->id,
                 'date'            => $validated['date'],
                 // 📌 JournalEntryAutoRef: reversal reference prefixed with REV/
                 'reference'       => 'REV/' . $journalEntry->reference,
@@ -407,7 +442,7 @@ class JournalEntryController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('delete journal_entries') && $authUser->company_id === $journalEntry->company_id),
+            ($authUser->hasPermissionTo('delete journal_entries') && (int) $authUser->company_id === (int) $journalEntry->company_id),
             403
         );
 
@@ -524,9 +559,9 @@ class JournalEntryController extends Controller
 
         // Build balance query — exclude current entry on update to avoid double-counting
         $balances = DB::table('journal_lines as jl')
-            ->join('journal_entries as je', 'je.id', '=', 'jl.journal_entry_id')
+            ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->whereIn('jl.account_id', $accounts->keys()->toArray())
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->where('je.company_id', $companyId)
             ->when($excludeEntryId, fn($q) => $q->where('je.id', '!=', $excludeEntryId))
             ->selectRaw('jl.account_id, COALESCE(SUM(jl.debit), 0) - COALESCE(SUM(jl.credit), 0) as balance')
@@ -559,6 +594,29 @@ class JournalEntryController extends Controller
 
     // 📌 JournalBalanceValidation — |Σdebit − Σcredit| ≤ 0.005
     // 📌 BcmathMonetaryPrecision — difference computed with bcsub at scale=4
+    /**
+     * QA-006 / QA-007 — server-side enforcement of what the form assumes:
+     *  - every line's account belongs to THIS company
+     *  - a line is either a debit or a credit, never both
+     */
+    private function assertLinesWellFormed(array $lines, int $companyId): void
+    {
+        $ids = collect($lines)->pluck('account_id')->filter()->unique()->values();
+        $own = Account::where('company_id', $companyId)->whereIn('id', $ids)->count();
+        if ($own !== $ids->count()) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'lines' => __('One or more accounts do not belong to this company.'),
+            ]);
+        }
+        foreach ($lines as $i => $line) {
+            if (bccomp((string) ($line['debit'] ?? 0), '0', 4) > 0 && bccomp((string) ($line['credit'] ?? 0), '0', 4) > 0) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    "lines.$i.debit" => __('A line cannot have both a debit and a credit amount.'),
+                ]);
+            }
+        }
+    }
+
     private function assertBalanced(array $lines): void
     {
         $totals = $this->lineTotals($lines);
@@ -600,9 +658,37 @@ class JournalEntryController extends Controller
             $credit = bcadd($credit, (string)($line['credit'] ?? 0), 4);
         }
         return [
-            'debit'  => (float) bcadd($debit,  '0', 2),
-            'credit' => (float) bcadd($credit, '0', 2),
+            'debit'  => (float) \App\Support\Money::round($debit, 2),
+            'credit' => (float) \App\Support\Money::round($credit, 2),
         ];
+    }
+
+    /**
+     * The open fiscal year an entry dated $date may be posted into.
+     * A given year must belong to the company, be open and cover the date;
+     * without one, the open year covering the date is used. Otherwise 422.
+     */
+    private function resolveOpenFiscalYear(int $companyId, ?int $fiscalYearId, string $date): FiscalYear
+    {
+        $query = FiscalYear::where('company_id', $companyId)
+            ->whereDate('start_date', '<=', $date)
+            ->whereDate('end_date', '>=', $date);
+
+        if ($fiscalYearId) {
+            $given = FiscalYear::find($fiscalYearId);
+            abort_unless($given && (int) $given->company_id === $companyId, 403);
+            $query->where('id', $fiscalYearId);
+        }
+
+        $fy = $query->first();
+
+        if (!$fy || $fy->status !== 'open') {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'date' => __('messages.fiscal_year_not_open'),
+            ]);
+        }
+
+        return $fy;
     }
 
     private function validateEntryRequest(Request $request): array
@@ -728,7 +814,7 @@ class JournalEntryController extends Controller
 
         $entries = JournalEntry::with(['lines.account:id,code,name_en,name_ar'])
             ->where('company_id', $companyId)
-            ->where('status', 'posted')
+            ->whereIn('status', ['posted', 'reversed'])
             ->whereDate('date', '>=', $fromDate)
             ->whereDate('date', '<=', $toDate)
             ->orderBy('date')

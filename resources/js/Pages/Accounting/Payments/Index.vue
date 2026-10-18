@@ -20,7 +20,7 @@
 import { ref, computed, watch } from 'vue'
 import { useForm, usePage, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 
 defineOptions({ layout: AuthenticatedLayout })
 
@@ -271,7 +271,9 @@ const dynamicOpenAp = ref([...props.openApInvoices])
 const dynamicOpenAr = ref([...props.openArInvoices])
 
 // BUG FIX: was hitting /fx-rates/latest — now correctly calls /payments/data-for-company
+let companyReq = 0
 watch(selectedCompanyId, async (id) => {
+	const myReq = ++companyReq
 	if (!id) return
 	try {
 		const res = await fetch(`/payments/data-for-company?company_id=${id}`, {
@@ -280,6 +282,7 @@ watch(selectedCompanyId, async (id) => {
 		})
 		if (!res.ok) return
 		const data = await res.json()
+		if (myReq !== companyReq) return
 		dynamicSuppliers.value = data.suppliers ?? []
 		dynamicCustomers.value = data.customers ?? []
 		dynamicBankAccounts.value = data.bankAccounts ?? []
@@ -347,9 +350,20 @@ function removeInvoiceRow(idx) {
 }
 
 // Running total of all allocations — used for the balance indicator
+// QA-014: each row is entered in its INVOICE's currency; the payment amount is in the PAYMENT's
+// currency. Convert rows of another currency exactly like the server does:
+//   allocated × invoice rate ÷ payment rate   (rate = EGP per 1 unit, EGP = 1)
+const paymentRate = computed(() => form.currency === 'EGP' ? 1 : (parseFloat(form.exchange_rate) || 0))
+function allocationInPaymentCurrency(row) {
+	const amt = parseFloat(row.allocated_amount || 0)
+	const invCur = row.invoice?.currency || 'EGP'
+	if (invCur === form.currency || !(paymentRate.value > 0)) return amt
+	const invRate = invCur === 'EGP' ? 1 : (parseFloat(row.invoice?.exchange_rate) || 1)
+	return amt * invRate / paymentRate.value
+}
 const allocationTotal = computed(() => {
 	return selectedInvoices.value.reduce((sum, row) => {
-		return bcAdd(sum, row.allocated_amount || '0')
+		return bcAdd(sum, allocationInPaymentCurrency(row))
 	}, 0)
 })
 
@@ -392,7 +406,7 @@ const form = useForm({
 	sub_type_comment: '',
 	payee_name: '',
 	allocations: [], // replaces ar_invoice_id / ap_invoice_id
-	date: new Date().toISOString().split('T')[0],
+	date: localToday(),
 	amount: '',
 	currency: 'EGP',
 	exchange_rate: '',
@@ -411,9 +425,9 @@ const checkForm = useForm({
 	new_status: '',
 	bank_name: '',
 	bank_account_id: '',
-	check_collection_date: new Date().toISOString().split('T')[0],
-	check_sent_to_bank_date: new Date().toISOString().split('T')[0],
-	check_rejection_date: new Date().toISOString().split('T')[0],
+	check_collection_date: localToday(),
+	check_sent_to_bank_date: localToday(),
+	check_rejection_date: localToday(),
 })
 
 // ── Computed helpers ───────────────────────────────────────────────
@@ -534,7 +548,7 @@ function openCollection() {
 	selectedInvoices.value = []
 	invoiceToAdd.value = ''
 	form.company_id = selectedCompanyId.value
-	form.date = new Date().toISOString().split('T')[0]
+	form.date = localToday()
 	form.payment_category = 'customer_collection'
 	showModal.value = true
 }
@@ -545,7 +559,7 @@ function openPayment() {
 	selectedInvoices.value = []
 	invoiceToAdd.value = ''
 	form.company_id = selectedCompanyId.value
-	form.date = new Date().toISOString().split('T')[0]
+	form.date = localToday()
 	form.payment_category = 'supplier_payment'
 	showModal.value = true
 }
@@ -598,6 +612,11 @@ function submitForm() {
 		return
 	}
 
+	if (form.currency !== 'EGP' && !(parseFloat(form.exchange_rate) > 0)) {
+		form.errors.exchange_rate = lang.value === 'ar' ? 'سعر الصرف مطلوب للعملات الأجنبية' : 'Exchange rate is required for foreign currency payments'
+		return
+	}
+
 	form.allocations = showInvoiceSelector.value
 		? selectedInvoices.value.map(row => ({
 			invoice_id: row.invoice_id,
@@ -615,9 +634,9 @@ function openCheckAction(payment, action) {
 	checkActionTarget.value = payment
 	checkAction.value = action
 	checkForm.reset()
-	checkForm.check_collection_date = new Date().toISOString().split('T')[0]
-	checkForm.check_sent_to_bank_date = new Date().toISOString().split('T')[0]
-	checkForm.check_rejection_date = new Date().toISOString().split('T')[0]
+	checkForm.check_collection_date = localToday()
+	checkForm.check_sent_to_bank_date = localToday()
+	checkForm.check_rejection_date = localToday()
 	checkActionModal.value = true
 }
 
@@ -657,19 +676,29 @@ function doDelete() {
 // ── Check Register ─────────────────────────────────────────────────
 const checkRegData = ref([])
 const checkRegLoading = ref(false)
+let checkRegReq = 0
 const checkBankFilter = ref('')
 const checkStatusFilter = ref('')
 
 async function loadCheckRegister() {
 	checkRegLoading.value = true
+	const myReq = ++checkRegReq
 	const params = new URLSearchParams()
 	if (selectedCompanyId.value) params.set('company_id', selectedCompanyId.value)
 	if (checkBankFilter.value) params.set('check_bank', checkBankFilter.value)
 	if (checkStatusFilter.value) params.set('check_status', checkStatusFilter.value)
-	const res = await fetch(`/payments/checks?${params}`, { credentials: 'same-origin' })
-	const data = await res.json()
-	checkRegData.value = data.grouped
-	checkRegLoading.value = false
+	// QA-010: a failed load must not leave the spinner running forever; newest answer wins
+	try {
+		const res = await fetch(`/payments/checks?${params}`, { credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+		if (!res.ok) throw new Error('HTTP ' + res.status)
+		const data = await res.json()
+		if (myReq === checkRegReq) checkRegData.value = data.grouped ?? []
+	} catch (e) {
+		if (myReq === checkRegReq) checkRegData.value = []
+		console.error('Failed to load check register', e)
+	} finally {
+		if (myReq === checkRegReq) checkRegLoading.value = false
+	}
 }
 
 watch(activeTab, (t) => {
@@ -707,13 +736,14 @@ async function fetchLatestRate() {
 	fetchingRate.value = true
 	try {
 		const companyId = selectedCompanyId.value || ''
+		const askedFor = form.currency
 		const res = await fetch(
 			`/fx-rates/latest?currency=${form.currency}&company_id=${companyId}`,
 			{ credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } }
 		)
 		if (!res.ok) return
 		const data = await res.json()
-		if (data?.rate) form.exchange_rate = data.rate
+		if (data?.rate && form.currency === askedFor) form.exchange_rate = data.rate
 	} catch { /* silent */ }
 	finally { fetchingRate.value = false }
 }
@@ -763,7 +793,7 @@ watch(() => form.currency, (val) => {
 			</div>
 		</div>
 		<!-- ── SA Company selector ────────────────────────── -->
-		<div v-if="isSuperAdmin" class="cv-card sa-company-bar">
+		<div v-if="isSuperAdmin && companies?.length" class="cv-card sa-company-bar">
 			<label class="cv-label">{{ tx.company }}</label>
 			<select v-model="selectedCompanyId" class="cv-select">
 				<option value="">— {{ tx.company }} —</option>

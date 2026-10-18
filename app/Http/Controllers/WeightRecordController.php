@@ -184,8 +184,8 @@ class WeightRecordController extends Controller
             'session_ref'          => 'nullable|string|max:255',
             'scale_reference'      => 'nullable|string|max:255',
             'readings'             => 'required|array|min:1',
-            'readings.*.animal_id' => 'required|exists:animals,id',
-            'readings.*.weight_kg' => 'required|numeric|min:0',
+            'readings.*.animal_id' => 'required|exists:animals,id|distinct',   // QA-048: one reading per animal per session
+            'readings.*.weight_kg' => 'required|numeric|min:0.1|max:2000',   // QA-048: 0 kg is not a weight; same limit as single entry
         ]);
 
         $lot = Lot::findOrFail($request->lot_id);
@@ -248,7 +248,7 @@ class WeightRecordController extends Controller
 
         $validated = $request->validate([
             'date'            => 'required|date',
-            'weight_kg'       => 'required|numeric|min:0|max:2000',
+            'weight_kg'       => 'required|numeric|min:0.1|max:2000',   // QA-048
             'lot_id'          => 'nullable|exists:lots,id',
             'scale_reference' => 'nullable|string|max:255',
             'session_ref'     => 'nullable|string|max:255',
@@ -317,7 +317,7 @@ class WeightRecordController extends Controller
             'lot_id'          => 'nullable|exists:lots,id',
             'farm_id'         => 'nullable|exists:farms,id',
             'date'            => 'required|date',
-            'weight_kg'       => 'required|numeric|min:0|max:2000',
+            'weight_kg'       => 'required|numeric|min:0.1|max:2000',   // QA-048
             'scale_reference' => 'nullable|string|max:255',
             'session_ref'     => 'nullable|string|max:255',
             'notes'           => 'nullable|string',

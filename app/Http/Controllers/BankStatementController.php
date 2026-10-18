@@ -65,6 +65,12 @@ class BankStatementController extends Controller
         if ($request->filled('is_matched'))    $query->where('is_matched',    (bool) $request->is_matched);
         if ($request->filled('date_from'))     $query->whereDate('date', '>=', $request->date_from);
         if ($request->filled('date_to'))       $query->whereDate('date', '<=', $request->date_to);
+        // QA-031: the Search box was sent by the page but never used here
+        if ($request->filled('search')) {
+            $term = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], trim((string) $request->search));
+            $query->where(fn ($q) => $q->where('description', 'like', "%{$term}%")
+                                       ->orWhere('reference', 'like', "%{$term}%"));
+        }
 
         $lines = $query->orderByDesc('date')->paginate(100)->withQueryString();
 
@@ -74,7 +80,7 @@ class BankStatementController extends Controller
             'lines'             => $lines->through(fn($l) => $this->formatLine($l)),
             'summary'           => $summary,
             'accounts'          => $this->availableBankAccounts($companyId ?? $authUser->company_id),
-            'filters'           => $request->only(['account_id', 'is_reconciled', 'is_matched', 'date_from', 'date_to']),
+            'filters'           => $request->only(['account_id', 'is_reconciled', 'is_matched', 'date_from', 'date_to', 'search']),
             'lastUploadErrors'  => $request->session()->get(
                 $this->uploadErrorsSessionKey($companyId ?? $authUser->company_id),
                 ['errors' => []]
@@ -245,7 +251,7 @@ class BankStatementController extends Controller
                 'lines.*.account_id'  => 'required|integer|exists:accounts,id',
                 'lines.*.date'        => 'required|date',
                 'lines.*.description' => 'required|string|max:255',
-                'lines.*.amount'      => 'required|numeric',
+                'lines.*.amount'      => $this->amountRules(),
                 'lines.*.reference'   => 'nullable|string|max:100',
             ]);
 
@@ -263,7 +269,7 @@ class BankStatementController extends Controller
             'account_id'  => 'required|integer|exists:accounts,id',
             'date'        => 'required|date',
             'description' => 'required|string|max:255',
-            'amount'      => 'required|numeric',
+            'amount'      => $this->amountRules(),
             'reference'   => 'nullable|string|max:100',
         ]);
 
@@ -280,7 +286,7 @@ class BankStatementController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit bank_statements') &&
-             $authUser->company_id === $bankStatement->company_id),
+             (int) $authUser->company_id === (int) $bankStatement->company_id),
             403
         );
 
@@ -289,7 +295,7 @@ class BankStatementController extends Controller
         $validated = $request->validate([
             'date'        => 'required|date',
             'description' => 'required|string|max:255',
-            'amount'      => 'required|numeric',
+            'amount'      => $this->amountRules(),
             'reference'   => 'nullable|string|max:100',
         ]);
 
@@ -306,7 +312,7 @@ class BankStatementController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit bank_statements') &&
-             $authUser->company_id === $bankStatement->company_id),
+             (int) $authUser->company_id === (int) $bankStatement->company_id),
             403
         );
 
@@ -317,7 +323,20 @@ class BankStatementController extends Controller
         ]);
 
         $entry = JournalEntry::findOrFail($request->journal_entry_id);
-        abort_unless($entry->company_id === $bankStatement->company_id, 403);
+        abort_unless((int) $entry->company_id === (int) $bankStatement->company_id, 403);
+
+        // The entry must be a posted one that really moved THIS bank account,
+        // and it may be matched to one statement line only.
+        $touchesAccount = $entry->status === 'posted'
+            && $entry->lines()->where('account_id', $bankStatement->account_id)->exists();
+        $alreadyUsed = BankStatement::where('matched_entry_id', $entry->id)
+            ->where('id', '!=', $bankStatement->id)->exists();
+
+        if (!$touchesAccount || $alreadyUsed) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'journal_entry_id' => __('messages.bank_match_invalid'),
+            ]);
+        }
 
         $bankStatement->update([
             'matched_entry_id' => $entry->id,
@@ -335,7 +354,7 @@ class BankStatementController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit bank_statements') &&
-             $authUser->company_id === $bankStatement->company_id),
+             (int) $authUser->company_id === (int) $bankStatement->company_id),
             403
         );
 
@@ -357,7 +376,7 @@ class BankStatementController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit bank_statements') &&
-             $authUser->company_id === $bankStatement->company_id),
+             (int) $authUser->company_id === (int) $bankStatement->company_id),
             403
         );
 
@@ -376,7 +395,7 @@ class BankStatementController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('delete bank_statements') &&
-             $authUser->company_id === $bankStatement->company_id),
+             (int) $authUser->company_id === (int) $bankStatement->company_id),
             403
         );
 
@@ -395,6 +414,22 @@ class BankStatementController extends Controller
      * Create a single bank statement line.
      * Guard: account must belong to same company AND be a 14xx/15xx account.
      */
+    /**
+     * QA-032 — an amount must be a real, non-zero number that fits the column (14 digits, 2 decimals).
+     * Before, 0 and numbers too large for the database (which ended in a server error) were accepted.
+     */
+    private function amountRules(): array
+    {
+        return [
+            'required', 'numeric', 'between:-999999999999.99,999999999999.99',
+            function ($attribute, $value, $fail) {
+                if ((float) $value == 0.0) {
+                    $fail(__('The amount cannot be zero.'));
+                }
+            },
+        ];
+    }
+
     private function createLine(array $data, int $companyId): void
     {
         $account = Account::where('id', $data['account_id'])
@@ -448,7 +483,7 @@ class BankStatementController extends Controller
             'account'          => $l->account
                                     ? $l->account->only(['id', 'code', 'name_en', 'name_ar', 'currency'])
                                     : null,
-            'date'             => $l->date,
+            'date'             => $this->ymd($l->date),   // QA-030
             'description'      => $l->description,
             'amount'           => $l->amount,
             'reference'        => $l->reference,

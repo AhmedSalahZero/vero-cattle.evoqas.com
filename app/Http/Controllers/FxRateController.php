@@ -118,7 +118,7 @@ class FxRateController extends Controller
         abort_unless(
             $authUser->is_super_admin ||
             ($authUser->hasPermissionTo('edit fx_rates') &&
-             $authUser->company_id === $fxRate->company_id),
+             (int) $authUser->company_id === (int) $fxRate->company_id),
             403
         );
 

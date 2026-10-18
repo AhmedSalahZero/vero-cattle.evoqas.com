@@ -126,7 +126,7 @@ class FarmController extends Controller
         );
 
         if (!$authUser->is_super_admin) {
-            abort_unless($farm->company_id === $authUser->company_id, 403);
+            abort_unless((int) $farm->company_id === (int) $authUser->company_id, 403);
         }
 
         $farm->load([
@@ -151,7 +151,7 @@ class FarmController extends Controller
         );
 
         if (!$authUser->is_super_admin) {
-            abort_unless($farm->company_id === $authUser->company_id, 403);
+            abort_unless((int) $farm->company_id === (int) $authUser->company_id, 403);
         }
 
         $companies = $authUser->is_super_admin
@@ -179,7 +179,7 @@ class FarmController extends Controller
         );
 
         if (!$authUser->is_super_admin) {
-            abort_unless($farm->company_id === $authUser->company_id, 403);
+            abort_unless((int) $farm->company_id === (int) $authUser->company_id, 403);
         }
 
         $this->sanitizeNullableFields($request);
@@ -204,7 +204,7 @@ class FarmController extends Controller
 
 
         if (!$authUser->is_super_admin) {
-            abort_unless($farm->company_id === $authUser->company_id, 403);
+            abort_unless((int) $farm->company_id === (int) $authUser->company_id, 403);
         }
 
         // Prevent deletion if farm has animals or lots
@@ -238,7 +238,7 @@ class FarmController extends Controller
         );
 
         if (!$authUser->is_super_admin) {
-            abort_unless($farm->company_id === $authUser->company_id, 403);
+            abort_unless((int) $farm->company_id === (int) $authUser->company_id, 403);
         }
 
         $farm->update(['is_active' => !$farm->is_active]);

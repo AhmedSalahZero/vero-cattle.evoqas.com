@@ -82,7 +82,7 @@ class FeedItemController extends Controller
         );
 
         if (!$authUser->is_super_admin) {
-            abort_unless($feedItem->company_id === $authUser->company_id, 403);
+            abort_unless((int) $feedItem->company_id === (int) $authUser->company_id, 403);
         }
 
         $validated = $this->validateItem($request, $feedItem->id);
@@ -103,7 +103,7 @@ class FeedItemController extends Controller
         );
 
         if (!$authUser->is_super_admin) {
-            abort_unless($feedItem->company_id === $authUser->company_id, 403);
+            abort_unless((int) $feedItem->company_id === (int) $authUser->company_id, 403);
         }
 
         // Soft-deactivate instead of hard delete to preserve consumption history

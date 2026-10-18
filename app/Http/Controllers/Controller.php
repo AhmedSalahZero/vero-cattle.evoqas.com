@@ -11,6 +11,22 @@ abstract class Controller
      * Inertia always sends '' for empty inputs; Laravel's nullable
      * rule requires actual null to pass. Call before validate().
      */
+    /**
+     * QA-030 — a plain calendar date ("2026-10-01") for the pages. A raw Carbon date would be sent as a
+     * UTC timestamp, and because the app runs on Cairo time midnight becomes "2026-09-30T21:00:00Z"
+     * (the previous day, and not readable by a date box).
+     */
+    protected function ymd($value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d');
+        }
+        return substr((string) $value, 0, 10);
+    }
+
     protected function sanitizeNullableFields(Request $request): void
     {
         $data = $request->all();

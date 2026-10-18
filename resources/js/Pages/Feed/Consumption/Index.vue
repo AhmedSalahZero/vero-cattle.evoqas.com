@@ -24,7 +24,7 @@
 import { ref, computed, watch } from 'vue'
 import { useForm, router, Link, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 defineOptions({ layout: AuthenticatedLayout })
 
 const { locale: lang, isRtl, n } = useLocale()
@@ -122,7 +122,7 @@ function openBatch() {
     batchForm.reset()
     batchForm.clearErrors()
     batchFarmId.value    = ''
-    batchForm.date       = new Date().toISOString().split('T')[0]
+    batchForm.date       = localToday()
     batchForm.rows       = [{ inventory_item_id: '', location_id: '', qty_kg: '', unit_cost: '' }]
     batchForm.animal_ids = []
     lotAnimals.value     = []
@@ -177,10 +177,21 @@ function locLabelShort(l) {
 function submitBatch() { batchForm.post(route('feed.consumption.batch'), { onSuccess: closeBatch }) }
 
 // 📌 METHODOLOGY REFERENCE: FeedConsumptionBatchStore — live total
+// QA-041: every row is rounded to cents (half up) before adding up — exactly like the server
+const r2 = (v) => Math.round((v + Number.EPSILON) * 100) / 100
 const batchTotalCost = computed(() =>
-    batchForm.rows.reduce((sum, row) =>
-        sum + (parseFloat(row.qty_kg) || 0) * (parseFloat(row.unit_cost) || 0), 0)
+    r2(batchForm.rows.reduce((sum, row) =>
+        sum + r2((parseFloat(row.qty_kg) || 0) * (parseFloat(row.unit_cost) || 0)), 0))
 )
+
+// QA-042: every message the server sends back (for example "not enough stock" on a quantity box) is
+// listed above the Save button. Before, messages for the quantity were not displayed anywhere.
+const batchErrorList = computed(() => [...new Set(Object.values(batchForm.errors || {}))])
+const editErrorList  = computed(() => [...new Set(Object.values(editForm.errors || {}))])
+const deleteError    = computed(() => {
+    const e = usePage().props.errors || {}
+    return e.delete || Object.values(e)[0] || ''
+})
 
 // ── Edit form — declared BEFORE openEdit uses it ──────────────────
 const editForm = useForm({
@@ -623,10 +634,12 @@ const t = computed(() => lang.value === 'ar' ? {
                                             <input v-model="row.qty_kg" type="number" step="0.001" min="0" class="cv-input cv-input-sm" placeholder="0.000"/>
                                             <!-- WAC (auto-filled, read intent via title) -->
                                             <div class="flex flex-col gap-1">
+                                                <!-- QA-041: the server always uses the stock's average cost (WAC); a typed cost is ignored, so the box is read-only -->
                                                 <input v-model="row.unit_cost" type="number" step="0.01" min="0" class="cv-input cv-input-sm" placeholder="0.00"
-                                                    :title="lang==='ar'?'يُملأ تلقائياً من WAC':'Auto-filled from WAC'"/>
+                                                    readonly style="opacity:.7;cursor:default"
+                                                    :title="lang==='ar'?'يُملأ تلقائياً من WAC ولا يمكن تغييره':'Auto-filled from WAC — cannot be changed'"/>
                                                 <span v-if="row.unit_cost && row.qty_kg" class="row-total">
-                                                    = {{ fmtNum(parseFloat(row.qty_kg) * parseFloat(row.unit_cost)) }}
+                                                    = {{ fmtNum(r2((parseFloat(row.qty_kg) || 0) * (parseFloat(row.unit_cost) || 0))) }}
                                                 </span>
                                             </div>
                                             <!-- Remove row -->
@@ -650,6 +663,11 @@ const t = computed(() => lang.value === 'ar' ? {
                             </form>
                         </div>
 
+                        <div v-if="batchErrorList.length" class="cv-alert cv-alert-danger" style="margin:.5rem 1rem 0">
+                            <ul style="margin:0;padding-inline-start:1.1rem">
+                                <li v-for="m in batchErrorList" :key="m" style="font-size:.8rem">{{ m }}</li>
+                            </ul>
+                        </div>
                         <div class="panel-footer">
                             <button type="button" @click="closeBatch" class="cv-btn cv-btn-ghost">{{ t.cancel2 }}</button>
                             <button type="button" @click="submitBatch" :disabled="batchForm.processing" class="cv-btn cv-btn-amber">
@@ -692,7 +710,7 @@ const t = computed(() => lang.value === 'ar' ? {
                                 <div v-if="editTarget?.inventory_item_id" class="grid gap-3 mb-3" style="grid-template-columns:1fr 1fr">
                                     <div class="cv-field">
                                         <label class="cv-label">{{ t.feedItemCol }}</label>
-                                        <select v-model="editForm.inventory_item_id" class="cv-select">
+                                        <select v-model="editForm.inventory_item_id" class="cv-select" disabled>
                                             <option value="">{{ t.selFeedItem }}</option>
                                             <option v-for="fi in inventoryFeedItems" :key="fi.id" :value="fi.id">
                                                 {{ lang==='ar'?(fi.name_ar||fi.name_en):(fi.name_en||fi.name_ar) }}
@@ -730,11 +748,11 @@ const t = computed(() => lang.value === 'ar' ? {
                                 <div class="grid gap-3" style="grid-template-columns:1fr 1fr">
                                     <div class="cv-field">
                                         <label class="cv-label">{{ t.dateLabel }}</label>
-                                        <input v-model="editForm.date" type="date" class="cv-input"/>
+                                        <input v-model="editForm.date" type="date" class="cv-input" :disabled="!!editTarget?.inventory_item_id"/>
                                     </div>
                                     <div class="cv-field">
                                         <label class="cv-label">{{ t.qtyKg }}</label>
-                                        <input v-model="editForm.qty_kg" type="number" step="0.001" min="0" class="cv-input"/>
+                                        <input v-model="editForm.qty_kg" type="number" step="0.001" min="0" class="cv-input" :disabled="!!editTarget?.inventory_item_id"/>
                                     </div>
                                     <div class="cv-field">
                                         <label class="cv-label">{{ t.unitCost }}</label>
@@ -750,6 +768,12 @@ const t = computed(() => lang.value === 'ar' ? {
                                     </div>
                                 </div>
 
+                                <!-- QA-043: once consumption is recorded the stock and the journal entry depend on these fields -->
+                                <p v-if="editTarget?.inventory_item_id" style="font-size:.75rem;color:var(--cv-text-muted);margin-top:.5rem">
+                                    {{ lang==='ar'
+                                        ? 'بعد تسجيل الاستهلاك يمكن تعديل الملاحظات فقط. لتغيير التاريخ أو الكمية أو الصنف أو الحيوانات: احذف السجل وأدخله من جديد.'
+                                        : 'After consumption is recorded only the notes can be changed. To change the date, quantity, item or animals: delete this record and enter it again.' }}
+                                </p>
                                 <div class="cv-field mt-3">
                                     <label class="cv-label">{{ t.notesLabel }}</label>
                                     <textarea v-model="editForm.notes" class="cv-textarea" rows="2" :placeholder="t.notesPh"/>
@@ -758,6 +782,11 @@ const t = computed(() => lang.value === 'ar' ? {
                             </div>
                         </div>
 
+                        <div v-if="editErrorList.length" class="cv-alert cv-alert-danger" style="margin:.5rem 1rem 0">
+                            <ul style="margin:0;padding-inline-start:1.1rem">
+                                <li v-for="m in editErrorList" :key="m" style="font-size:.8rem">{{ m }}</li>
+                            </ul>
+                        </div>
                         <div class="panel-footer">
                             <button type="button" @click="closeEdit" class="cv-btn cv-btn-ghost">{{ t.cancel2 }}</button>
                             <button type="button" @click="submitEdit" :disabled="editForm.processing" class="cv-btn cv-btn-amber">
@@ -781,6 +810,8 @@ const t = computed(() => lang.value === 'ar' ? {
                         <div class="cv-modal-body">
                             <p class="font-semibold mb-1" style="color:var(--cv-text-primary)">{{ deleteTarget?.date }} · {{ deleteTarget?.lot?.name }}</p>
                             <p>{{ t.deleteMsg }}</p>
+                            <!-- QA-044: a refused delete (for example a posted journal entry) must say why -->
+                            <p v-if="deleteError" class="cv-field-error" style="margin-top:.5rem">{{ deleteError }}</p>
                         </div>
                         <div class="cv-modal-footer">
                             <button class="cv-btn cv-btn-ghost" @click="deleteModal=false">{{ t.cancel }}</button>

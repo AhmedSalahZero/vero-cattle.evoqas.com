@@ -66,10 +66,13 @@ class FarmCostAllocationService
             })
             ->select(
                 'alh.animal_id',
+                // NOTE: positional `?` placeholders only. The query builder always uses
+                // positional bindings for the other conditions, and MySQL/PDO refuses to
+                // mix `?` with named `:placeholders` in one statement (error HY093).
                 DB::raw("
                     DATEDIFF(
-                        LEAST(COALESCE(alh.exited_at, :month_end_a), :month_end_b),
-                        GREATEST(alh.entered_at, :month_start)
+                        LEAST(COALESCE(alh.exited_at, ?), ?),
+                        GREATEST(alh.entered_at, ?)
                     ) + 1 AS days_in_month
                 ")
             )
@@ -283,17 +286,17 @@ class FarmCostAllocationService
             }
 
             // ── Balance check (#1 JournalBalanceValidation) ───────
-            $totalDr = array_sum(array_column($lines, 'debit'));
-            $totalCr = array_sum(array_column($lines, 'credit'));
+            $totalDr = $this->sumLines($lines, 'debit');
+            $totalCr = $this->sumLines($lines, 'credit');
 
-            if (abs($totalDr - $totalCr) > 0.005) {
+            if (!$this->isBalanced($totalDr, $totalCr)) {
                 throw new \RuntimeException(
                     "Journal entry is not balanced: Dr {$totalDr} ≠ Cr {$totalCr}. Aborting."
                 );
             }
 
             // If all amounts are zero (no labor, no overheads), skip posting
-            if ($totalDr == 0 && $totalCr == 0) {
+            if (bccomp($totalDr, '0', 2) === 0 && bccomp($totalCr, '0', 2) === 0) {
                 // Still mark as posted with zero — preserves status machine integrity
                 $fresh->update([
                     'status'             => 'posted',
@@ -474,19 +477,35 @@ class FarmCostAllocationService
             }
 
             // ── Balance check ─────────────────────────────────────
-            $totalDr = array_sum(array_column($lines, 'debit'));
-            $totalCr = array_sum(array_column($lines, 'credit'));
+            $totalDr = $this->sumLines($lines, 'debit');
+            $totalCr = $this->sumLines($lines, 'credit');
 
-            if (abs($totalDr - $totalCr) > 0.005) {
+            if (!$this->isBalanced($totalDr, $totalCr)) {
                 throw new \RuntimeException(
                     "Settlement JE not balanced: Dr {$totalDr} ≠ Cr {$totalCr}. Aborting."
                 );
             }
 
             // ── Post ──────────────────────────────────────────────
+            // The settlement is dated today when an open fiscal year covers today;
+            // otherwise (e.g. settling an old month after the year rolled over) it is
+            // dated the allocation's month-end, whose open fiscal year must exist.
+            // This keeps the entry's date inside its own fiscal year.
+            $settleDate = now()->toDateString();
             $fy = FiscalYear::where('company_id', $fresh->company_id)
                 ->where('status', 'open')
+                ->where('start_date', '<=', $settleDate)
+                ->where('end_date', '>=', $settleDate)
                 ->first();
+
+            if (!$fy) {
+                $settleDate = $fresh->month_end->toDateString();
+                $fy = FiscalYear::where('company_id', $fresh->company_id)
+                    ->where('status', 'open')
+                    ->where('start_date', '<=', $settleDate)
+                    ->where('end_date', '>=', $settleDate)
+                    ->first();
+            }
 
             if (!$fy) {
                 throw new \RuntimeException('No open fiscal year found for settlement.');
@@ -495,8 +514,8 @@ class FarmCostAllocationService
             $je = JournalEntry::create([
                 'company_id'    => $fresh->company_id,
                 'fiscal_year_id'=> $fy->id,
-                'date'          => now()->toDateString(),
-                'period'        => (int) now()->month,
+                'date'          => $settleDate,
+                'period'        => (int) \Carbon\Carbon::parse($settleDate)->month,
                 'description'   => "Labor & Overhead Settlement — {$farmName} — {$monthLabel}",
                 'entry_type'    => 'labor_overhead_settlement',
                 'status'        => 'posted',
@@ -599,11 +618,14 @@ class FarmCostAllocationService
                 if ($allocation && $allocation->total_animal_days > 0) {
 
                     // Animal's days in this month
-                    $animalDaysInMonth = max(0,
-                        Carbon::parse(min($membershipEnd->toDateString(), $monthEnd))
-                            ->diffInDays(Carbon::parse(max($membershipStart->toDateString(), $monthStart)))
-                        + 1
-                    );
+                    // Always measure from the EARLIER date to the LATER date:
+                    // Carbon 3 (Laravel 12) returns a negative number the other way round,
+                    // which silently turned every animal's labor/overhead share into 0.
+                    $overlapStart = Carbon::parse(max($membershipStart->toDateString(), $monthStart));
+                    $overlapEnd   = Carbon::parse(min($membershipEnd->toDateString(), $monthEnd));
+                    $animalDaysInMonth = $overlapEnd->lt($overlapStart)
+                        ? 0
+                        : (int) $overlapStart->diffInDays($overlapEnd) + 1;
 
                     if ($animalDaysInMonth > 0) {
                         $totalDays = (string) $allocation->total_animal_days;
@@ -627,8 +649,8 @@ class FarmCostAllocationService
         }
 
         return [
-            'labor'    => (float) bcadd($totalLabor,    '0', 2),
-            'overhead' => (float) bcadd($totalOverhead, '0', 2),
+            'labor'    => (float) \App\Support\Money::round($totalLabor, 2),
+            'overhead' => (float) \App\Support\Money::round($totalOverhead, 2),
         ];
     }
 
@@ -661,9 +683,9 @@ class FarmCostAllocationService
         return [
             'total_animal_days'          => $totalDays,
             'active_animal_count'        => count($dayData['animal_days']),
-            'daily_rate'                 => (float) bcadd($dailyRate, '0', 2),
-            'rate_per_animal_day'        => (float) bcadd($ratePerDay, '0', 4),
-            'projected_per_animal_month' => (float) bcadd($projectedPerAnimal, '0', 2),
+            'daily_rate'                 => (float) \App\Support\Money::round($dailyRate, 2),
+            'rate_per_animal_day'        => (float) \App\Support\Money::round($ratePerDay, 4),
+            'projected_per_animal_month' => (float) \App\Support\Money::round($projectedPerAnimal, 2),
         ];
     }
 
@@ -688,7 +710,7 @@ class FarmCostAllocationService
 
         foreach ($animalDays as $animalId => $days) {
             $share = bcmul($ratePerDay, (string) $days, 4);
-            $share = bcadd($share, '0', 2);  // round to cents
+            $share = \App\Support\Money::round($share, 2);  // round to cents
 
             if (isset($exitedAnimalIds[$animalId])) {
                 $cogsTotal = bcadd($cogsTotal, $share, 2);
@@ -702,7 +724,29 @@ class FarmCostAllocationService
         $residual = bcsub($totalCost, $sumCheck, 2);
         $wipTotal = bcadd($wipTotal, $residual, 2);
 
-        return [$wipTotal, $cogsTotal];
+        return [\App\Support\Money::round($wipTotal, 2), \App\Support\Money::round($cogsTotal, 2)];
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // PRIVATE — bcmath helpers for journal totals
+    // 📌 METHODOLOGY REFERENCE: BcmathMonetaryPrecision (#38)
+    // ──────────────────────────────────────────────────────────────
+
+    /** Sum one column ('debit' / 'credit') of the journal lines as a 2-dp bcmath string. */
+    private function sumLines(array $lines, string $column): string
+    {
+        $total = '0.00';
+        foreach ($lines as $line) {
+            $total = bcadd($total, \App\Support\Money::round($line[$column] ?? 0, 2), 2);
+        }
+        return $total;
+    }
+
+    /** 📌 JournalBalanceValidation (#1): |Dr − Cr| ≤ 0.005 */
+    private function isBalanced(string $debit, string $credit): bool
+    {
+        $diff = ltrim(bcsub($debit, $credit, 4), '-');
+        return bccomp($diff, '0.0050', 4) <= 0;
     }
 
     // ──────────────────────────────────────────────────────────────

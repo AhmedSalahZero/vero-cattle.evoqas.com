@@ -8,6 +8,7 @@
  *        is_active, accounting_mode, currency, country, logo
  */
 import { ref, computed } from 'vue'
+import { localToday } from '@/Composables/useLocale'
 import { Head, Link, router, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import axios from 'axios'
@@ -46,19 +47,24 @@ const filtered = computed(() => {
 })
 
 // ── Subscription helpers ───────────────────────────────────────────
+// QA-086: whole calendar days, local date. The old sum compared "midnight UTC of the end date" with "midnight
+// local today", so the last day of a subscription showed "1 day left" and the first day after it still said
+// "Expires today" — while the server already treats it as expired.
+function daysBetweenToday(dateStr) {
+    const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number)
+    const [ty, tm, td] = localToday().split('-').map(Number)
+    return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(ty, tm - 1, td)) / 86400000)
+}
 function subStatus(c) {
     if (!c.subscription_ends_at) return 'none'
-    const today = new Date(); today.setHours(0,0,0,0)
-    const end   = new Date(c.subscription_ends_at)
-    const diff  = Math.ceil((end - today) / 86400000)
+    const diff = daysBetweenToday(c.subscription_ends_at)
     if (diff < 0)                  return 'expired'
     if (diff <= props.warningDays) return 'expiring'
     return 'active'
 }
 function subDays(c) {
     if (!c.subscription_ends_at) return null
-    const today = new Date(); today.setHours(0,0,0,0)
-    return Math.ceil((new Date(c.subscription_ends_at) - today) / 86400000)
+    return daysBetweenToday(c.subscription_ends_at)
 }
 function subLabel(c) {
     const days = subDays(c)
@@ -81,10 +87,17 @@ function exitCompany() {
 // ── Delete confirm ─────────────────────────────────────────────────
 const deleteTarget  = ref(null)
 const deleteLoading = ref(false)
-function confirmDelete(c) { deleteTarget.value = c }
+// QA-087: deleting a company wipes ALL its data for ever (farms, animals, accounting, everything), so one click
+// is not enough: the company name must be typed before the button works.
+const deleteConfirmText = ref('')
+const deleteNameRequired = computed(() => String(deleteTarget.value?.name_en || deleteTarget.value?.name_ar || '').trim())
+const canConfirmDelete = computed(() =>
+    deleteNameRequired.value !== '' && deleteConfirmText.value.trim().toLowerCase() === deleteNameRequired.value.toLowerCase()
+)
+function confirmDelete(c) { deleteConfirmText.value = ''; deleteTarget.value = c }
 function cancelDelete()   { deleteTarget.value = null }
 function executeDelete() {
-    if (!deleteTarget.value) return
+    if (!deleteTarget.value || !canConfirmDelete.value) return
     deleteLoading.value = true
     router.delete(route('companies.destroy', deleteTarget.value.id), {
         onFinish: () => { deleteLoading.value = false; deleteTarget.value = null },
@@ -468,14 +481,20 @@ function avatarGrad(c) { return gradients[(c.id ?? 0) % gradients.length] }
                         <h3 class="del-title">Delete Company</h3>
                         <p class="del-body">
                             Are you sure you want to permanently delete
-                            <strong class="del-company">{{ deleteTarget?.name_en }}</strong>?
-                            This cannot be undone.
+                            <strong class="del-company">{{ deleteTarget?.name_en || deleteTarget?.name_ar }}</strong>?
+                            This deletes ALL of its data (farms, animals, accounting …) and cannot be undone.
                         </p>
+                        <p class="del-body" style="margin-top:.5rem">
+                            Type the company name to confirm:
+                            <strong class="del-company">{{ deleteNameRequired }}</strong>
+                        </p>
+                        <input v-model="deleteConfirmText" type="text" class="cv-input" autocomplete="off"
+                               style="margin:.5rem 0 .75rem;width:100%" :placeholder="deleteNameRequired" />
                         <div class="del-footer">
                             <button class="del-btn-cancel" @click="cancelDelete">Cancel</button>
                             <button class="del-btn-confirm"
                                     :class="{'btn-loading': deleteLoading}"
-                                    @click="executeDelete">
+                                    @click="executeDelete" :disabled="!canConfirmDelete || deleteLoading">
                                 <svg v-if="!deleteLoading" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                     <path stroke-linecap="round" stroke-linejoin="round"
                                           d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/>

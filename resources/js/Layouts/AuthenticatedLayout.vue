@@ -25,7 +25,7 @@
  *   • Added a "Manage Users" shortcut inside the user dropdown menu
  * ─────────────────────────────────────────────────────────────────────────────
  */
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Link, usePage, router } from '@inertiajs/vue3'
 import { useLocale } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
@@ -46,6 +46,16 @@ router.on('navigate', () => {
 
 // ── Inertia page ─────────────────────────────────────────────────
 const page = usePage()
+
+// QA-004: a server refusal arrives as flash.error. Show it as a toast ABOVE everything (modals included,
+// they would otherwise hide it), for 10 seconds or until clicked.
+const flashErrorVisible = ref(false)
+let flashErrorTimer = null
+watch(() => page.props.flash?.error, (msg) => {
+	clearTimeout(flashErrorTimer)
+	flashErrorVisible.value = !!msg
+	if (msg) flashErrorTimer = setTimeout(() => { flashErrorVisible.value = false }, 10000)
+}, { immediate: true })
 const { user, isSuperAdmin, can } = usePermissions()
 const accountingMode = computed(() => page.props.accounting_mode ?? 'standalone')
 const currentFarm = computed(() => page.props.current_farm ?? null)
@@ -92,6 +102,20 @@ const handleOutside = (e) => {
 	if (el && !el.contains(e.target)) closeUserMenu()
 }
 onMounted(() => document.addEventListener('click', handleOutside))
+
+// QA-053: the app decides its language when the page code is first loaded — before the page data is
+// available — so on a browser that has no saved choice yet it started in English even for a user whose
+// account says Arabic. Once the layout is up, apply the language saved on the account if the browser
+// has no choice of its own.
+onMounted(() => {
+	try {
+		const saved = localStorage.getItem('vero_locale')
+		const accountLang = page.props?.auth?.user?.language
+		if (!saved && (accountLang === 'ar' || accountLang === 'en') && lang.value !== accountLang) {
+			setLocale(accountLang)
+		}
+	} catch (e) { /* storage unavailable — keep the current language */ }
+})
 onBeforeUnmount(() => document.removeEventListener('click', handleOutside))
 
 // ── Computed helpers ──────────────────────────────────────────────
@@ -216,6 +240,14 @@ const navGroups = computed(() => {
                            <line x1="6" y1="1" x2="6" y2="4"/>
                            <line x1="10" y1="1" x2="10" y2="4"/>
                            <line x1="14" y1="1" x2="14" y2="4"/>`,
+				},
+				{
+					label: { en: 'Feed Mixing', ar: 'خلط الأعلاف' },
+					routeName: 'feed.mixing.index',
+					icon: `<path d="M4 7h16l-1.5 11a2 2 0 0 1-2 1.7H7.5a2 2 0 0 1-2-1.7L4 7z"/>
+                           <path d="M8 7V5a4 4 0 0 1 8 0v2"/>
+                           <path d="M9 12c1 1 2 1 3 0s2-1 3 0"/>
+                           <path d="M9 15.5c1 1 2 1 3 0s2-1 3 0"/>`,
 				},
 				{
 					label: { en: 'Weight Records', ar: 'سجلات الوزن' },
@@ -742,24 +774,26 @@ const navGroups = computed(() => {
 				</div><!-- /cv-header-actions -->
 			</header>
 			<!-- Flash messages -->
-			<div v-if="$page.props.flash?.success || $page.props.flash?.error" class="cv-flash-zone" role="alert"
+			<div v-if="$page.props.flash?.success" class="cv-flash-zone" role="alert"
 				aria-live="polite">
-				<div v-if="$page.props.flash?.success" class="cv-alert cv-alert-success">
+				<div class="cv-alert cv-alert-success">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
 						stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 						<polyline points="20 6 9 17 4 12" />
 					</svg>
 					{{ $page.props.flash.success }}
 				</div>
-				<div v-if="$page.props.flash?.error" class="cv-alert cv-alert-danger">
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-						stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-						<circle cx="12" cy="12" r="10" />
-						<line x1="12" y1="8" x2="12" y2="12" />
-						<line x1="12" y1="16" x2="12.01" y2="16" />
-					</svg>
-					{{ $page.props.flash.error }}
-				</div>
+			</div>
+			<!-- Error toast (floats above modals) -->
+			<div v-if="flashErrorVisible && $page.props.flash?.error" class="cv-alert cv-alert-danger cv-flash-toast"
+				role="alert" aria-live="assertive" @click="flashErrorVisible = false">
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+					stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<circle cx="12" cy="12" r="10" />
+					<line x1="12" y1="8" x2="12" y2="12" />
+					<line x1="12" y1="16" x2="12.01" y2="16" />
+				</svg>
+				{{ $page.props.flash.error }}
 			</div>
 			<!-- Page content -->
 			<main>
@@ -1138,6 +1172,16 @@ const navGroups = computed(() => {
 /* ══════════════════════════════════════════════════════════════════
    FLASH ZONE
 ══════════════════════════════════════════════════════════════════ */
+.cv-flash-toast {
+	position: fixed;
+	top: 1rem;
+	inset-inline: 1rem;
+	max-width: 640px;
+	margin-inline: auto;
+	z-index: 400;
+	cursor: pointer;
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
 .cv-flash-zone {
 	padding: 0.75rem 1.5rem 0;
 	display: flex;

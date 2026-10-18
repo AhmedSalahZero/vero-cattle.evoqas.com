@@ -147,7 +147,9 @@ const form = useForm({
 watch(() => form.fiscal_year_id, (fyId) => {
     if (!fyId) return
     const fy = props.fiscalYears.find(f => f.id === parseInt(fyId))
-    if (fy && !form.date) form.date = fy.start_date
+    // QA-029: also move the date when it falls outside the newly chosen fiscal year
+    // (otherwise the server refuses the save with a confusing message)
+    if (fy && (!form.date || form.date < fy.start_date || form.date > fy.end_date)) form.date = fy.start_date
 })
 
 // ── Partner sub-table helpers ─────────────────────────────────────
@@ -186,9 +188,7 @@ const totalDebits = computed(() => {
         if (line.side === 'dr') sum += accountTotal(line)
     }
     for (const inv of inventoryLines) {
-        const qty  = parseFloat(inv.qty || 0)
-        const cost = parseFloat(inv.unit_cost || 0)
-        sum += qty * cost
+        sum += invValue(inv)
     }
     return sum
 })
@@ -200,6 +200,11 @@ const totalCredits = computed(() => {
     }
     return sum
 })
+
+// QA-028: the server rounds EACH stock line to cents (half up) before adding them up — do the same here,
+// otherwise the plug shown on screen can differ by a cent or two from the plug that is posted.
+const r2 = (v) => Math.round((v + Number.EPSILON) * 100) / 100
+const invValue = (inv) => r2((parseFloat(inv.qty || 0)) * (parseFloat(inv.unit_cost || 0)))
 
 const equityPlug = computed(() => parseFloat((totalDebits.value - totalCredits.value).toFixed(2)))
 const plugSide   = computed(() => {
@@ -214,7 +219,7 @@ const sectionTotal = (type) =>
         .reduce((s, l) => s + (l.side === 'dr' ? accountTotal(l) : -accountTotal(l)), 0)
 
 const inventoryTotal = computed(() =>
-    inventoryLines.reduce((s, l) => s + parseFloat(l.qty || 0) * parseFloat(l.unit_cost || 0), 0)
+    r2(inventoryLines.reduce((s, l) => s + invValue(l), 0))
 )
 
 // ── Fiscal year ref ───────────────────────────────────────────────
@@ -355,7 +360,7 @@ const equityLines    = computed(() => accountLines.filter(l => l._acc.type === '
                         </div>
                         <div class="cv-field">
                             <label class="cv-label">{{ t('As-of Date','تاريخ الرصيد الافتتاحي') }} <span style="color:var(--cv-danger-text)">*</span></label>
-                            <input v-model="form.date" type="date" class="cv-input" />
+                            <input v-model="form.date" type="date" class="cv-input" :min="selectedFy?.start_date" :max="selectedFy?.end_date" />
                             <div v-if="form.errors.date" class="cv-field-error">{{ form.errors.date }}</div>
                         </div>
                         <div class="cv-field" style="grid-column:1/-1">
@@ -532,8 +537,8 @@ const equityLines    = computed(() => accountLines.filter(l => l._acc.type === '
                                 style="color:var(--cv-blue-text)"
                             />
                             <!-- Value (computed) -->
-                            <div class="ob-inv-value" :class="parseFloat(inv.qty||0) * parseFloat(inv.unit_cost||0) > 0 ? 'ob-inv-value-active' : ''">
-                                {{ fmt(parseFloat(inv.qty||0) * parseFloat(inv.unit_cost||0)) }}
+                            <div class="ob-inv-value" :class="invValue(inv) > 0 ? 'ob-inv-value-active' : ''">
+                                {{ fmt(invValue(inv)) }}
                             </div>
                         </div>
                     </div>

@@ -82,34 +82,56 @@ class AnalyticsReportController extends Controller
         $pl = $this->financials->profitAndLoss($companyId, $dateFrom, $dateTo);
 
         // ── Derive sub-totals from Balance Sheet ─────────────────
-        $currentAssets = collect($bs['assets'])
-            ->filter(fn($a) => !str_starts_with($a['code'] ?? '', '16'))
-            ->sum('balance');
+        // QA-077 — the ratios used to add up EVERY row of the balance sheet. That list contains the group
+        // headers (with their rolled-up totals) AND the accounts inside them, so amounts were counted two or
+        // three times; and the "current" rules did not fit the chart of accounts (fixed assets counted as current,
+        // receivables left out, long-term liabilities counted as current). Now:
+        //   - only posting accounts (the real balances) are added up, each once
+        //   - current assets  = 13xx stock/WIP, 14xx cash, 15xx banks, 16xx receivables, 17xx other debtors
+        //   - inventory       = 13xx
+        //   - current liabilities = 22xx (21xx is long-term)
+        $sumPosting = function (array $rows, array $prefixes): float {
+            $total = '0';
+            foreach ($rows as $r) {
+                if (empty($r['allow_direct_posting'])) {
+                    continue;
+                }
+                $code = (string) ($r['code'] ?? '');
+                foreach ($prefixes as $p) {
+                    if (str_starts_with($code, $p)) {
+                        $total = bcadd($total, (string) ($r['balance'] ?? 0), 2);
+                        break;
+                    }
+                }
+            }
+            return (float) $total;
+        };
 
-        $inventory = collect($bs['assets'])
-            ->filter(fn($a) => str_starts_with($a['code'] ?? '', '13'))
-            ->sum('balance');
-
-        $currentLiabilities = collect($bs['liabilities'])
-            ->filter(fn($a) => !str_starts_with($a['code'] ?? '', '23'))
-            ->sum('balance');
+        $currentAssets      = $sumPosting($bs['assets'], ['13', '14', '15', '16', '17']);
+        $inventory          = $sumPosting($bs['assets'], ['13']);
+        $currentLiabilities = $sumPosting($bs['liabilities'], ['22']);
 
         $totalAssets      = $bs['total_assets'];
         $totalLiabilities = $bs['total_liabilities'];
         $totalEquity      = $bs['total_equity'];
 
         // ── P&L values ───────────────────────────────────────────
-        $revenue     = $pl['current']['revenue']     ?? 0;
-        $cogs        = $pl['current']['cogs']         ?? 0;
+        // The P&L service names these keys total_revenue / total_cogs. (They were read as
+        // 'revenue' / 'cogs', which do not exist, so revenue and COGS were always 0 and every
+        // ratio built on them — margins, asset turnover, inventory turnover — came out empty.)
+        $revenue     = $pl['current']['total_revenue'] ?? 0;
+        $cogs        = $pl['current']['total_cogs']    ?? 0;
         $grossProfit = $pl['current']['gross_profit'] ?? 0;
         $netIncome   = $pl['current']['net_income']   ?? 0;
 
         // Average inventory (opening + closing) / 2
         // Opening: balance sheet one day before date_from
-        $bsOpen       = $this->financials->balanceSheet($companyId, $dateFrom, $fiscalYearId);
-        $inventoryOpen = collect($bsOpen['assets'])
-            ->filter(fn($a) => str_starts_with($a['code'] ?? '', '13'))
-            ->sum('balance');
+        $bsOpen       = $this->financials->balanceSheet(
+            $companyId,
+            \Illuminate\Support\Carbon::parse($dateFrom)->subDay()->toDateString(),
+            $fiscalYearId
+        );
+        $inventoryOpen = $sumPosting($bsOpen['assets'], ['13']);   // QA-077
         $avgInventory = ($inventoryOpen + $inventory) / 2;
 
         // ── Compute ratios — guard division by zero ───────────────
@@ -566,9 +588,12 @@ class AnalyticsReportController extends Controller
 
         $companyId = $this->resolveCompany($request);
 
-        // Join: inventory_transactions (receipt) → inventory_items (master) → suppliers
+        // Join: inventory_transactions (receipt) → stock row → its MASTER item → suppliers.
+        // Receipts are booked against the LOCATION-STOCK row (is_master = false), so the
+        // master item is reached through master_item_id (a master row points to itself).
         $query = DB::table('inventory_transactions as it')
-            ->join('inventory_items as ii', 'ii.id', '=', 'it.item_id')
+            ->join('inventory_items as si', 'si.id', '=', 'it.item_id')
+            ->join('inventory_items as ii', 'ii.id', '=', DB::raw('COALESCE(si.master_item_id, si.id)'))
             ->join('suppliers as s', 's.id', '=', 'it.supplier_id')
             ->where('it.company_id', $companyId)
             ->where('it.type', 'receipt')
@@ -577,13 +602,13 @@ class AnalyticsReportController extends Controller
             ->whereBetween('it.date', [$request->date_from, $request->date_to]);
 
         if ($request->filled('item_id')) {
-            $query->where('it.item_id', $request->item_id);
+            $query->where('ii.id', $request->item_id);
         }
 
         $rows = $query
-            ->groupBy('it.item_id', 'ii.name_en', 'ii.name_ar', 'ii.unit', 'ii.category', 'it.supplier_id', 's.name_en', 's.name_ar')
+            ->groupBy('ii.id', 'ii.name_en', 'ii.name_ar', 'ii.unit', 'ii.category', 'it.supplier_id', 's.name_en', 's.name_ar')
             ->select([
-                'it.item_id',
+                'ii.id as item_id',
                 'ii.name_en as item_name_en',
                 'ii.name_ar as item_name_ar',
                 'ii.unit',

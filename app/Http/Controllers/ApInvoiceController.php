@@ -140,7 +140,7 @@ class ApInvoiceController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('view ap_invoices') && $authUser->company_id === $apInvoice->company_id),
+            ($authUser->hasPermissionTo('view ap_invoices') && (int) $authUser->company_id === (int) $apInvoice->company_id),
             403
         );
 
@@ -170,32 +170,31 @@ class ApInvoiceController extends Controller
             403
         );
 
-        // SA: open POs start empty — cascade via dataForCompany when company is picked
-        // Regular: populated immediately keyed by supplier_id
-        $openPosBySupplier = $authUser->is_super_admin
-            ? (object) []
-            : $this->openLivestockPosBySupplier($authUser->company_id);
+        // QA-011 (option A): no company dropdown any more. A Super Admin works inside the company
+        // they "Entered" (session); everything on the form is loaded for that company.
+        $formCompanyId = $authUser->is_super_admin
+            ? (int) session('selected_company_id', 0)
+            : (int) $authUser->company_id;
+        if ($formCompanyId <= 0) {
+            return redirect()->route('companies.index')
+                ->with('error', 'No company selected. Click Enter on a company first.');
+        }
+        $openPosBySupplier = $this->openLivestockPosBySupplier($formCompanyId);
 
         return Inertia::render('Accounting/ApInvoices/CreateEdit', [
             'mode'                 => 'create',
             'invoice'              => null,
             // SA: suppliers start empty — cascade via dataForCompany
             // Regular: populated immediately
-            'suppliers'            => $authUser->is_super_admin
-                ? collect()
-                : $this->availableSuppliers($authUser->company_id),
-            'companies'            => $authUser->is_super_admin
-                ? Company::where('is_active', true)->orderBy('name_en')->get(['id', 'name_en', 'name_ar'])
-                : collect(),
+            'suppliers'            => $this->availableSuppliers($formCompanyId),
+            'companies'            => collect(),
             // Keyed by supplier_id → array of open POs with unmatched livestock accruals.
             // Vue watches form.supplier_id and shows a warning banner when this is non-empty.
             'open_pos_by_supplier' => $openPosBySupplier,
             // Expense/asset accounts for 'other' invoice type.
             // Excludes: group headers, cash (14xx), bank (15xx).
             // SA: starts empty — cascade via dataForCompany.
-            'expense_accounts'     => $authUser->is_super_admin
-                ? collect()
-                : $this->availableExpenseAccounts($authUser->company_id),
+            'expense_accounts'     => $this->availableExpenseAccounts($formCompanyId),
         ]);
     }
 
@@ -217,7 +216,7 @@ class ApInvoiceController extends Controller
 
         // Guard: supplier must belong to the resolved company
         $supplier = Supplier::findOrFail($validated['supplier_id']);
-        abort_unless($supplier->company_id === $companyId, 422, 'Supplier does not belong to this company.');
+        abort_unless((int) $supplier->company_id === (int) $companyId, 422, 'Supplier does not belong to this company.');
 
         // 📌 InvoiceForeignCurrencyBalance: EGP always rate=1, foreign requires rate>0
         // Explicitly overwrite $validated so no downstream code can use a wrong rate,
@@ -301,7 +300,7 @@ class ApInvoiceController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit ap_invoices') && $authUser->company_id === $apInvoice->company_id),
+            ($authUser->hasPermissionTo('edit ap_invoices') && (int) $authUser->company_id === (int) $apInvoice->company_id),
             403
         );
 
@@ -314,9 +313,7 @@ class ApInvoiceController extends Controller
             'mode'                 => 'edit',
             'invoice'              => $this->formatInvoice($apInvoice),
             'suppliers'            => $this->availableSuppliers($companyId),
-            'companies'            => $authUser->is_super_admin
-                ? Company::where('is_active', true)->orderBy('name_en')->get(['id', 'name_en', 'name_ar'])
-                : collect(),
+            'companies'            => collect(),   // QA-011: no company dropdown
             'open_pos_by_supplier' => $this->openLivestockPosBySupplier($companyId),
             'expense_accounts'     => $this->availableExpenseAccounts($companyId),
         ]);
@@ -329,13 +326,33 @@ class ApInvoiceController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit ap_invoices') && $authUser->company_id === $apInvoice->company_id),
+            ($authUser->hasPermissionTo('edit ap_invoices') && (int) $authUser->company_id === (int) $apInvoice->company_id),
             403
         );
 
         abort_if(in_array($apInvoice->status, ['paid', 'cancelled']), 422, __('messages.invoice_not_editable'));
 
         $validated = $this->validateInvoice($request);
+
+        // QA-012: supplier (and, for "other" invoices, the expense account) must belong to this
+        // invoice's company — same rules as create
+        $supplier = Supplier::find($validated['supplier_id']);
+        if (! $supplier || (int) $supplier->company_id !== (int) $apInvoice->company_id) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'supplier_id' => __('Supplier does not belong to this company.'),
+            ]);
+        }
+        if ($apInvoice->invoice_type === 'other' && ! empty($validated['expense_account_id'])) {
+            $okAccount = Account::where('id', $validated['expense_account_id'])
+                ->where('company_id', $apInvoice->company_id)
+                ->where('allow_direct_posting', true)
+                ->exists();
+            if (! $okAccount) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'expense_account_id' => __('Invalid expense account selected.'),
+                ]);
+            }
+        }
 
         // 📌 InvoiceForeignCurrencyBalance: re-validate rate on update
         // Explicitly overwrite $validated to guarantee EGP rate is always 1.0.
@@ -352,24 +369,67 @@ class ApInvoiceController extends Controller
         $newBalance = bccomp($newBalance, '0', 4) < 0 ? '0' : $newBalance;   // floor at zero
         $newStatus  = $this->resolveInvoiceStatus($newBalance, (string)$validated['total'], $validated['due_date'] ?? null);
 
-        $apInvoice->update([
-            'supplier_id'        => $validated['supplier_id'],
-            'date'               => $validated['date'],
-            'due_date'           => $validated['due_date'] ?? null,
-            'reference'          => $validated['reference'] ?? null,
-            'description'        => $validated['description'] ?? null,
-            'total'              => $validated['total'],
-            'balance'            => (float) bcadd($newBalance, '0', 4),
-            'currency'           => $currency,
-            'exchange_rate'      => $exchangeRate,
-            'status'             => $newStatus,
-            'notes'              => $validated['notes'] ?? null,
-            // invoice_type is immutable after creation — cannot change from cattle to other
-            // expense_account_id can be updated while invoice is open (other type only)
-            'expense_account_id' => $apInvoice->invoice_type === 'other'
-                ? ($validated['expense_account_id'] ?? $apInvoice->expense_account_id)
-                : null,
-        ]);
+        // QA-013 — if this invoice already has a POSTED journal entry and the amount, rate, date or
+        // expense account changes, the old entry is REVERSED and a fresh one POSTED, all in one
+        // transaction (if the new entry cannot be posted, nothing at all is changed).
+        $oldJe = $apInvoice->journal_entry_id ? JournalEntry::find($apInvoice->journal_entry_id) : null;
+        $needsRepost = false;
+        if ($oldJe && $oldJe->status === 'posted') {
+            $needsRepost =
+                bccomp((string) $apInvoice->total, (string) $validated['total'], 4) !== 0
+                || bccomp(sprintf('%.6F', (float) $apInvoice->exchange_rate), sprintf('%.6F', (float) $exchangeRate), 6) !== 0
+                || \Carbon\Carbon::parse($apInvoice->date)->toDateString() !== \Carbon\Carbon::parse($validated['date'])->toDateString()
+                || ($apInvoice->invoice_type === 'other'
+                    && (int) $apInvoice->expense_account_id !== (int) ($validated['expense_account_id'] ?? $apInvoice->expense_account_id));
+        }
+
+        DB::transaction(function () use ($apInvoice, $validated, $currency, $exchangeRate, $newBalance, $newStatus, $oldJe, $needsRepost) {
+            $apInvoice->update([
+                'supplier_id'        => $validated['supplier_id'],
+                'date'               => $validated['date'],
+                'due_date'           => $validated['due_date'] ?? null,
+                'reference'          => $validated['reference'] ?? null,
+                'description'        => $validated['description'] ?? null,
+                'total'              => $validated['total'],
+                'balance'            => (float) bcadd($newBalance, '0', 4),
+                'currency'           => $currency,
+                'exchange_rate'      => $exchangeRate,
+                'status'             => $newStatus,
+                'notes'              => $validated['notes'] ?? null,
+                // invoice_type is immutable after creation — cannot change from cattle to other
+                // expense_account_id can be updated while invoice is open (other type only)
+                'expense_account_id' => $apInvoice->invoice_type === 'other'
+                    ? ($validated['expense_account_id'] ?? $apInvoice->expense_account_id)
+                    : null,
+            ]);
+
+            if ($needsRepost) {
+                if ($apInvoice->invoice_type === 'other') {
+                    $this->reverseInvoiceJournalEntry($oldJe);
+                } else {
+                    // receipts may have been matched in several batches, each with its own entry
+                    $this->reverseAllMatchJournalEntries($apInvoice);
+                }
+
+                $fresh = $apInvoice->fresh();
+                if ($fresh->invoice_type === 'other') {
+                    $this->postOtherInvoiceJournalEntry($fresh);
+                } else {
+                    $this->postAccrualMatchJournalEntry(
+                        $fresh,
+                        InventoryTransaction::where('ap_invoice_id', $fresh->id)->get()
+                    );
+                }
+
+                // The post routines "soft-fail" (they only flash a warning). Here that is not acceptable:
+                // an edit that cannot be re-posted must not be saved half-way.
+                if ((int) $fresh->fresh()->journal_entry_id === (int) $oldJe->id) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'total' => __('The linked journal entry could not be re-posted (check the fiscal year and accounts 2210 / 2230 / expense account). Nothing was changed.'),
+                    ]);
+                }
+            }
+        });
 
         return redirect()->route('ap-invoices.show', $apInvoice)
             ->with('success', __('messages.ap_invoice_updated'));
@@ -382,7 +442,7 @@ class ApInvoiceController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit ap_invoices') && $authUser->company_id === $apInvoice->company_id),
+            ($authUser->hasPermissionTo('edit ap_invoices') && (int) $authUser->company_id === (int) $apInvoice->company_id),
             403
         );
 
@@ -402,7 +462,7 @@ class ApInvoiceController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('delete ap_invoices') && $authUser->company_id === $apInvoice->company_id),
+            ($authUser->hasPermissionTo('delete ap_invoices') && (int) $authUser->company_id === (int) $apInvoice->company_id),
             403
         );
 
@@ -547,11 +607,11 @@ class ApInvoiceController extends Controller
         ]);
 
         return [
-            'current'  => (float) bcadd((string)($row->current_bucket  ?? 0), '0', 2),
-            '1_30'     => (float) bcadd((string)($row->bucket_1_30     ?? 0), '0', 2),
-            '31_60'    => (float) bcadd((string)($row->bucket_31_60    ?? 0), '0', 2),
-            '61_90'    => (float) bcadd((string)($row->bucket_61_90    ?? 0), '0', 2),
-            'over_90'  => (float) bcadd((string)($row->bucket_over_90  ?? 0), '0', 2),
+            'current'  => (float) \App\Support\Money::round((string)($row->current_bucket  ?? 0), 2),
+            '1_30'     => (float) \App\Support\Money::round((string)($row->bucket_1_30     ?? 0), 2),
+            '31_60'    => (float) \App\Support\Money::round((string)($row->bucket_31_60    ?? 0), 2),
+            '61_90'    => (float) \App\Support\Money::round((string)($row->bucket_61_90    ?? 0), 2),
+            'over_90'  => (float) \App\Support\Money::round((string)($row->bucket_over_90  ?? 0), 2),
         ];
     }
 
@@ -718,7 +778,7 @@ class ApInvoiceController extends Controller
         $authUser = Auth::user();
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit ap_invoices') && $authUser->company_id === $apInvoice->company_id),
+            ($authUser->hasPermissionTo('edit ap_invoices') && (int) $authUser->company_id === (int) $apInvoice->company_id),
             403
         );
 
@@ -743,7 +803,7 @@ class ApInvoiceController extends Controller
                         "Transaction #{$tx->id} is not a receipt.");
 
                 // Guard: same company
-                abort_unless($tx->company_id === $apInvoice->company_id, 422,
+                abort_unless((int) $tx->company_id === (int) $apInvoice->company_id, 422,
                     "Transaction #{$tx->id} belongs to a different company.");
 
                 // Guard: same supplier
@@ -772,7 +832,22 @@ class ApInvoiceController extends Controller
             //
             // If matched total ≠ invoice total a price variance line is added
             // to keep the entry balanced (Methodology #32).
-            $this->postAccrualMatchJournalEntry($apInvoice, $txns);
+            //
+            // QA-016 — receipts may be matched in several batches. Each batch used to post its own
+            // entry crediting the FULL invoice total (double-counting payables and inventing a price
+            // variance). Now: reverse the entries of earlier batches and post ONE entry covering
+            // every receipt matched to this invoice so far (same approach as unmatching, QA-015).
+            $reversed = $this->reverseAllMatchJournalEntries($apInvoice);
+            $allMatched = InventoryTransaction::where('ap_invoice_id', $apInvoice->id)->get();
+
+            $before = $apInvoice->fresh()->journal_entry_id;
+            $this->postAccrualMatchJournalEntry($apInvoice->fresh(), $allMatched);
+
+            // First-time matching keeps its old "soft" behaviour (match saved, warning shown).
+            // But if earlier entries were reversed and the new one cannot be posted, do not leave a gap.
+            if ($reversed > 0 && (int) $apInvoice->fresh()->journal_entry_id === (int) $before) {
+                abort(422, 'The accounting entry could not be re-posted (check the fiscal year and accounts 2210 / 2230). Nothing was matched.');
+            }
         });
 
         return back()->with('success', __('messages.accruals_matched'));
@@ -788,7 +863,7 @@ class ApInvoiceController extends Controller
         $authUser = Auth::user();
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit ap_invoices') && $authUser->company_id === $apInvoice->company_id),
+            ($authUser->hasPermissionTo('edit ap_invoices') && (int) $authUser->company_id === (int) $apInvoice->company_id),
             403
         );
 
@@ -798,7 +873,30 @@ class ApInvoiceController extends Controller
         abort_unless($inventoryTransaction->ap_invoice_id === $apInvoice->id, 422,
             'Transaction is not matched to this invoice.');
 
-        $inventoryTransaction->update(['ap_invoice_id' => null]);
+        // QA-015 — the accounting entry made when the receipts were matched must not stay behind:
+        // reverse it, then (if other receipts are still matched) post a fresh one for those only.
+        // One transaction: if anything cannot be posted, the receipt stays matched.
+        try {
+            DB::transaction(function () use ($apInvoice, $inventoryTransaction) {
+                $inventoryTransaction->update(['ap_invoice_id' => null]);
+
+                $this->reverseAllMatchJournalEntries($apInvoice);
+
+                $remaining = InventoryTransaction::where('ap_invoice_id', $apInvoice->id)->get();
+                $fresh = $apInvoice->fresh();
+                if ($remaining->isNotEmpty()) {
+                    $before = $fresh->journal_entry_id;
+                    $this->postAccrualMatchJournalEntry($fresh, $remaining);
+                    if ((int) $fresh->fresh()->journal_entry_id === (int) $before) {
+                        abort(422, 'The accounting entry could not be re-posted (check the fiscal year and accounts 2210 / 2230). The receipt stays matched.');
+                    }
+                } else {
+                    $fresh->update(['journal_entry_id' => null]);
+                }
+            });
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            abort(422, collect($e->errors())->flatten()->first());
+        }
 
         return back()->with('success', __('messages.accrual_unmatched'));
     }
@@ -833,9 +931,13 @@ class ApInvoiceController extends Controller
         foreach ($matchedTxns as $tx) {
             $accrualTotal = bcadd($accrualTotal, (string) $tx->total, 4);
         }
-        $accrualTotal = bcadd($accrualTotal, '0', 2); // round to 2dp
+        $accrualTotal = \App\Support\Money::round($accrualTotal, 2); // round to 2dp
 
-        $invoiceTotal = bcadd((string) $apInvoice->total, '0', 2);
+        // QA-014: the invoice total is in the invoice's own currency — convert to EGP with its rate
+        // (rate is 1 for EGP invoices) before comparing with the EGP receipt totals.
+        $invoiceTotal = \App\Support\Money::round(
+            bcmul((string) $apInvoice->total, (string) ($apInvoice->exchange_rate ?: 1), 6), 2
+        );
 
         // Look up required accounts
         $accrualAccount  = Account::where('company_id', $companyId)->where('code', '2230')->first();
@@ -874,8 +976,8 @@ class ApInvoiceController extends Controller
         // Total debit = accrual total (Dr AP Accruals)
         // Total credit = invoice total (Cr AP) ± variance line
         // Entry must balance — variance line ensures this
-        $totalDebit  = (float) bcadd($accrualTotal, '0', 2);
-        $totalCredit = (float) bcadd($accrualTotal, '0', 2); // always balanced
+        $totalDebit  = (float) \App\Support\Money::round($accrualTotal, 2);
+        $totalCredit = (float) \App\Support\Money::round($accrualTotal, 2); // always balanced
 
         $je = JournalEntry::create([
             'company_id'     => $companyId,
@@ -904,7 +1006,7 @@ class ApInvoiceController extends Controller
         JournalLine::create([
             'entry_id'   => $je->id,
             'account_id' => $accrualAccount->id,
-            'debit'      => (float) bcadd($accrualTotal, '0', 2),
+            'debit'      => (float) \App\Support\Money::round($accrualTotal, 2),
             'credit'     => 0,
             'memo'       => $description,
         ]);
@@ -914,7 +1016,7 @@ class ApInvoiceController extends Controller
             'entry_id'   => $je->id,
             'account_id' => $payableAccount->id,
             'debit'      => 0,
-            'credit'     => (float) bcadd($invoiceTotal, '0', 2),
+            'credit'     => (float) \App\Support\Money::round($invoiceTotal, 2),
             'memo'       => $description,
         ]);
 
@@ -923,7 +1025,7 @@ class ApInvoiceController extends Controller
         if ($hasVariance) {
             // Positive variance: accrual > invoice → Cr variance (gain)
             // Negative variance: accrual < invoice → Dr variance (loss)
-            $varianceAbs = (float) bcadd(ltrim($variance, '-'), '0', 2);
+            $varianceAbs = (float) \App\Support\Money::round(ltrim($variance, '-'), 2);
             $isGain      = bccomp($variance, '0', 4) > 0;
 
             // Look up Purchase Price Variance account (5200 — COGS group)
@@ -945,8 +1047,93 @@ class ApInvoiceController extends Controller
             }
         }
 
+        // Header totals must equal the real line totals. When the invoice and the
+        // receipts differ, the lines add up to more than the receipt total, and the
+        // header (set before the variance line existed) would otherwise be wrong.
+        $je->update([
+            'total_debit'  => (float) $je->lines()->sum('debit'),
+            'total_credit' => (float) $je->lines()->sum('credit'),
+        ]);
+
         // Link the JE to the AP invoice for the Show page
         $apInvoice->update(['journal_entry_id' => $je->id]);
+    }
+
+    /**
+     * QA-013 — reverse a posted journal entry that belongs to this invoice.
+     * Same rules as JournalEntryController::reverse(): a NEW posted entry with debit and credit
+     * swapped (dated like the original, so both sit in the same period); the original is marked
+     * "reversed". Needs an open fiscal year covering the original date, otherwise the edit is refused.
+     */
+    private function reverseInvoiceJournalEntry(JournalEntry $je): void
+    {
+        $je = JournalEntry::lockForUpdate()->findOrFail($je->id);
+        if ($je->status !== 'posted') {
+            return;
+        }
+        $date = \Carbon\Carbon::parse($je->date)->toDateString();
+
+        $fy = FiscalYear::where('company_id', $je->company_id)
+            ->where('status', 'open')
+            ->whereDate('start_date', '<=', $date)
+            ->whereDate('end_date', '>=', $date)
+            ->first();
+        if (! $fy) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'date' => __('This invoice already has an accounting entry in a closed period (:date). Re-open that fiscal year first, or cancel the invoice instead.', ['date' => $date]),
+            ]);
+        }
+
+        $reversal = JournalEntry::create([
+            'company_id'     => $je->company_id,
+            'reversal_of_id' => $je->id,
+            'fiscal_year_id' => $fy->id,
+            'date'           => $date,
+            'reference'      => 'REV/' . $je->reference,
+            'description'    => 'Reversal of ' . $je->reference . ' (invoice edited)',
+            'period'         => (int) date('n', strtotime($date)),
+            'status'         => 'posted',
+            'entry_type'     => 'reversal',
+            'total_debit'    => $je->total_credit,
+            'total_credit'   => $je->total_debit,
+            'posted_by'      => Auth::id(),
+            'posted_at'      => now(),
+            'notes'          => 'Reversal of entry #' . $je->id . ' because the AP invoice was edited',
+        ]);
+
+        foreach ($je->lines as $line) {
+            $reversal->lines()->create([
+                'account_id'       => $line->account_id,
+                'debit'            => $line->credit,
+                'credit'           => $line->debit,
+                'lot_id'           => $line->lot_id,
+                'animal_id'        => $line->animal_id,
+                'farm_id'          => $line->farm_id,
+                'memo'             => 'Reversal: ' . $line->memo,
+                'foreign_currency' => $line->foreign_currency,
+                'foreign_amount'   => $line->foreign_amount,
+                'exchange_rate'    => $line->exchange_rate,
+            ]);
+        }
+
+        $je->update(['status' => 'reversed']);
+    }
+
+    /**
+     * QA-013 / QA-015 — reverse EVERY posted accrual-match entry of this invoice
+     * (matching can happen in several batches, each posting its own entry).
+     */
+    private function reverseAllMatchJournalEntries(ApInvoice $apInvoice): int
+    {
+        $entries = JournalEntry::where('source_type', ApInvoice::class)
+            ->where('source_id', $apInvoice->id)
+            ->where('entry_type', 'procurement')
+            ->where('status', 'posted')
+            ->get();
+        foreach ($entries as $je) {
+            $this->reverseInvoiceJournalEntry($je);
+        }
+        return $entries->count();
     }
 
     /**
@@ -1034,7 +1221,7 @@ class ApInvoiceController extends Controller
             (string) $apInvoice->exchange_rate,
             4
         );
-        $amountEgp = bcadd($amountEgp, '0', 2); // round to 2dp
+        $amountEgp = \App\Support\Money::round($amountEgp, 2); // round to 2dp
 
         $reference   = 'APX/' . str_pad($apInvoice->id, 5, '0', STR_PAD_LEFT);
         $description = 'AP Invoice — ' . ($apInvoice->reference ?? $reference)
@@ -1123,7 +1310,7 @@ class ApInvoiceController extends Controller
                     'id'              => $po->id,
                     'po_reference'    => $po->po_reference,
                     'received_head'   => $po->received_head,
-                    'unmatched_total' => (float) bcadd($unmatchedTotal, '0', 2),
+                    'unmatched_total' => (float) \App\Support\Money::round($unmatchedTotal, 2),
                 ];
             })->values()->all();
         });

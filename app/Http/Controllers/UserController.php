@@ -313,11 +313,13 @@ class UserController extends Controller
         );
 
         $validated = $this->validateUser($request);
+        $this->assertFarmsBelongToCompany($validated['farm_ids'] ?? [], (int) $validated['company_id']);
+        $this->assertMayAssignRole($authUser, $validated['role'] ?? null);
 
         // Company admin can only add to their own company
         if (!$authUser->is_super_admin) {
             abort_unless(
-                (int) $validated['company_id'] === $authUser->company_id,
+                (int) $validated['company_id'] === (int) $authUser->company_id,
                 403
             );
 
@@ -391,7 +393,7 @@ class UserController extends Controller
         );
 
         if (!$authUser->is_super_admin) {
-            abort_unless($user->company_id === $authUser->company_id, 403);
+            abort_unless((int) $user->company_id === (int) $authUser->company_id, 403);
         }
 
         $companies = $authUser->is_super_admin
@@ -431,10 +433,12 @@ class UserController extends Controller
         );
 
         if (!$authUser->is_super_admin) {
-            abort_unless($user->company_id === $authUser->company_id, 403);
+            abort_unless((int) $user->company_id === (int) $authUser->company_id, 403);
         }
 
         $validated = $this->validateUser($request, $user->id);
+        $this->assertFarmsBelongToCompany($validated['farm_ids'] ?? [], (int) $user->company_id);
+        $this->assertMayAssignRole($authUser, $validated['role'] ?? null);
 
         if ($request->hasFile('avatar')) {
             if ($user->avatar) {
@@ -495,7 +499,7 @@ class UserController extends Controller
         );
 
         if (!$authUser->is_super_admin) {
-            abort_unless($user->company_id === $authUser->company_id, 403);
+            abort_unless((int) $user->company_id === (int) $authUser->company_id, 403);
         }
 
         abort_if($user->id === $authUser->id, 403, 'Cannot delete your own account.');
@@ -523,7 +527,7 @@ class UserController extends Controller
         );
 
         if (!$authUser->is_super_admin) {
-            abort_unless($user->company_id === $authUser->company_id, 403);
+            abort_unless((int) $user->company_id === (int) $authUser->company_id, 403);
         }
 
         abort_if($user->id === $authUser->id, 403, 'You cannot deactivate your own account.');
@@ -556,7 +560,38 @@ class UserController extends Controller
             ->pluck('name')
             ->toArray();
 
+        // Nobody can give away more than they hold: a user who is not a Super Admin /
+        // Company Admin may only grant permissions they have themselves.
+        $actor = $request->user();
+        if ($actor && !$actor->is_super_admin && !$actor->hasRole('Company Admin')) {
+            $valid = array_values(array_filter($valid, fn ($name) => $actor->hasPermissionTo($name)));
+        }
+
         return $valid;
+    }
+
+    // ── Private: a user may only be given farms of their own company ──
+    private function assertFarmsBelongToCompany(array $farmIds, int $companyId): void
+    {
+        if (!$farmIds) return;
+
+        $ok = \App\Models\Farm::whereIn('id', $farmIds)->where('company_id', $companyId)->count()
+            === count(array_unique($farmIds));
+
+        if (!$ok) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'farm_ids' => __('validation.exists', ['attribute' => 'farm']),
+            ]);
+        }
+    }
+
+    // ── Private: only a Super Admin or a Company Admin may hand out the
+    //    Company Admin role (it carries full user management) ──────────
+    private function assertMayAssignRole($authUser, ?string $role): void
+    {
+        if ($role !== 'Company Admin') return;
+
+        abort_unless($authUser->is_super_admin || $authUser->hasRole('Company Admin'), 403);
     }
 
     // ── Private: validation ───────────────────────────────────────

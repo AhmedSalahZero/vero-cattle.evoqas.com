@@ -118,6 +118,9 @@ class FixedAssetController extends Controller
         // Otherwise use session selected_company_id.
         $companyId = $this->resolveCompanyId($request);
 
+        // Every account picked must belong to THIS company (the form only checks it exists)
+        $this->assertAccountsBelongToCompany($validated, $companyId);
+
         // Land never depreciates — enforce server-side regardless of form input
         if (($validated['category'] ?? '') === 'land') {
             $validated['salvage_value']        = 0;
@@ -220,6 +223,7 @@ class FixedAssetController extends Controller
             ->where('is_posted', true)->exists();
 
         $validated = $this->validateAsset($request, $fixedAsset->id, $hasPostedLines);
+        $this->assertAccountsBelongToCompany($validated, (int) $fixedAsset->company_id);
 
         // Land never depreciates — enforce server-side
         if (($validated['category'] ?? $fixedAsset->category) === 'land') {
@@ -322,6 +326,8 @@ class FixedAssetController extends Controller
         ]);
 
         $fiscalYear = FiscalYear::findOrFail($request->fiscal_year_id);
+        abort_unless((int) $fiscalYear->company_id === (int) $fixedAsset->company_id, 422,
+            'Fiscal year does not belong to this asset\'s company.');
 
         abort_if(
             $fixedAsset->depreciation_method === 'none',
@@ -355,7 +361,7 @@ class FixedAssetController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            $authUser->hasPermissionTo('post depreciation'),
+            $authUser->hasPermissionTo('edit fixed_assets'),   // 'post depreciation' was never seeded → 500 for non-super-admins
             403
         );
 
@@ -424,15 +430,11 @@ class FixedAssetController extends Controller
                 (string) $line->amount,
                 4
             );
-            // ✅ FA-S2 FIX: compute and persist net_book_value after each period
-            $newNbv = (float) bcsub(
-                (string) $fixedAsset->purchase_cost,
-                (string) $newAccum,
-                4
-            );
+            // net_book_value is a MySQL GENERATED column (cost − accumulated depreciation):
+            // the database recomputes it itself. Writing it here made every depreciation
+            // posting fail with error 3105, so it is deliberately NOT written.
             $fixedAsset->update([
                 'accumulated_depreciation' => $newAccum,
-                'net_book_value'           => max(0.0, $newNbv), // never below zero
                 'status' => $newAccum >= $fixedAsset->depreciable_base
                     ? 'fully_depreciated'
                     : 'active',
@@ -498,21 +500,22 @@ class FixedAssetController extends Controller
             $nbv       = $cost - $accumDep;
             $gainLoss  = $proceeds - $nbv; // positive = gain, negative = loss
 
-            // ── Find or derive gain/loss accounts from CoA ────────
-            // These account codes follow the standard VERO chart.
-            // If they don't exist yet the JE will still be created
-            // with the asset's own accounts — accountant can adjust.
-            $gainAccount = Account::where('company_id', $fixedAsset->company_id)
-                ->where('code', '4200')  // Gain on asset disposal
+            // ── Resolve the accounts used by the disposal entry ───
+            // BUG FIX: this used to look up 4200 (= Meat / Carcass Sales revenue) for the
+            // gain, 6300 (= Farm Labour) for the loss and 1100 (= the Fixed Assets GROUP,
+            // which cannot be posted to) for cash. A disposal therefore posted to the wrong
+            // accounts or failed. The chart of accounts has ONE account for this:
+            // 6800 "Gain / Loss on Asset Disposal" — credit = gain, debit = loss.
+            $gainLossAccount = Account::where('company_id', $fixedAsset->company_id)
+                ->where('code', '6800')
+                ->where('allow_direct_posting', true)
                 ->first();
+            $gainAccount = $gainLossAccount;
+            $lossAccount = $gainLossAccount;
 
-            $lossAccount = Account::where('company_id', $fixedAsset->company_id)
-                ->where('code', '6300')  // Loss on asset disposal
-                ->first();
-
-            $cashAccount = Account::where('company_id', $fixedAsset->company_id)
-                ->where('code', '1100')  // Cash
-                ->first();
+            // Proceeds go to the account the asset was paid from if that is a cash/bank
+            // account, otherwise to the first active cash (14xx) then bank (15xx) account.
+            $cashAccount = $this->resolveDisposalCashAccount($fixedAsset);
 
             // Compute total debit = AccumDep + Proceeds + Loss (if any)
             $totalDebit  = $accumDep + $proceeds + ($gainLoss < 0 ? abs($gainLoss) : 0);
@@ -599,8 +602,8 @@ class FixedAssetController extends Controller
 
             if (bccomp($imbalance, '0.0050', 4) > 0) {
                 // Roll back the transaction — the JE entry is invalid.
-                // Likely cause: Chart of Accounts accounts 1100, 4200, or 6300
-                // are missing. The accountant must seed them before disposing.
+                // Likely cause: account 6800 (Gain / Loss on Asset Disposal) or a
+                // cash / bank account (14xx / 15xx) is missing.
                 throw new \Illuminate\Http\Exceptions\HttpResponseException(
                     response()->json([
                         'message' => __('messages.disposal_je_unbalanced_missing_accounts'),
@@ -610,8 +613,8 @@ class FixedAssetController extends Controller
 
             // Sync header totals to match actual line sums
             $je->update([
-                'total_debit'  => (float) bcadd((string) $actualDebit,  '0', 2),
-                'total_credit' => (float) bcadd((string) $actualCredit, '0', 2),
+                'total_debit'  => (float) \App\Support\Money::round((string) $actualDebit, 2),
+                'total_credit' => (float) \App\Support\Money::round((string) $actualCredit, 2),
             ]);
 
             // ── Update asset record ───────────────────────────────
@@ -630,6 +633,39 @@ class FixedAssetController extends Controller
 
         return redirect()->route('fixed-assets.show', $fixedAsset->id)
             ->with('success', __('messages.asset_disposed'));
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  PRIVATE — Cash / bank account that receives disposal proceeds
+    // ══════════════════════════════════════════════════════════════
+    private function resolveDisposalCashAccount(FixedAsset $asset): ?Account
+    {
+        $isCashOrBank = fn (?Account $a) => $a
+            && (int) $a->company_id === (int) $asset->company_id
+            && $a->allow_direct_posting
+            && $a->is_active
+            && (str_starts_with((string) $a->code, '14') || str_starts_with((string) $a->code, '15'));
+
+        if ($asset->payment_account_id) {
+            $paid = Account::find($asset->payment_account_id);
+            if ($isCashOrBank($paid)) {
+                return $paid;
+            }
+        }
+
+        foreach (['14', '15'] as $prefix) {
+            $found = Account::where('company_id', $asset->company_id)
+                ->where('code', 'like', $prefix . '%')
+                ->where('allow_direct_posting', true)
+                ->where('is_active', true)
+                ->orderBy('code')
+                ->first();
+            if ($found) {
+                return $found;
+            }
+        }
+
+        return null;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -967,6 +1003,30 @@ class FixedAssetController extends Controller
 
         $validated = $request->validate($rules);
 
+        // QA-023 — cross-field checks the form assumes (land is normalised later, so skip it here).
+        // Without these a bad asset saved "successfully" but silently produced NO depreciation
+        // (a schedule needs a life / rate and a salvage value below the cost).
+        if (! $lockFinancials && ($validated['category'] ?? null) !== 'land') {
+            $cost    = (string) ($validated['purchase_cost'] ?? '0');
+            $salvage = (string) ($validated['salvage_value'] ?? '0');
+            if (bccomp($salvage, $cost, 4) > 0) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'salvage_value' => __('Salvage value cannot be higher than the purchase cost.'),
+                ]);
+            }
+            $method = $validated['depreciation_method'] ?? null;
+            if ($method === 'straight_line' && empty($validated['useful_life_months'])) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'useful_life_months' => __('Useful life (months) is required for straight-line depreciation.'),
+                ]);
+            }
+            if ($method === 'declining_balance' && empty($validated['db_rate'])) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'db_rate' => __('Annual rate is required for declining-balance depreciation.'),
+                ]);
+            }
+        }
+
         // ── Cross-field bilingual guard ───────────────────────────
         // At least one of name_en / name_ar must be non-null
         if (empty($validated['name_en']) && empty($validated['name_ar'])) {
@@ -1130,10 +1190,30 @@ class FixedAssetController extends Controller
     }
 
     // ── Authorize access to a specific asset ─────────────────────
+    /**
+     * The form only checks that an account id EXISTS. Make sure each chosen account
+     * belongs to the asset's own company — otherwise the purchase / depreciation /
+     * disposal entries could post into another company's books.
+     */
+    private function assertAccountsBelongToCompany(array $validated, int $companyId): void
+    {
+        foreach (['asset_account_id', 'acc_dep_account_id', 'dep_expense_account_id', 'payment_account_id'] as $field) {
+            if (empty($validated[$field])) {
+                continue;
+            }
+            $ok = Account::where('id', $validated[$field])->where('company_id', $companyId)->exists();
+            if (! $ok) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    $field => 'الحساب المختار لا يخص هذه الشركة / The selected account does not belong to this company.',
+                ]);
+            }
+        }
+    }
+
     private function authorizeAsset($authUser, FixedAsset $asset): void
     {
         if ($authUser->is_super_admin) return;
-        abort_unless($asset->company_id === $authUser->company_id, 403);
+        abort_unless((int) $asset->company_id === (int) $authUser->company_id, 403);
     }
 
     // ── Authorize farm access ─────────────────────────────────────
@@ -1141,6 +1221,6 @@ class FixedAssetController extends Controller
     {
         if ($authUser->is_super_admin) return;
         $farm = Farm::findOrFail($farmId);
-        abort_unless($farm->company_id === $authUser->company_id, 403);
+        abort_unless((int) $farm->company_id === (int) $authUser->company_id, 403);
     }
 }

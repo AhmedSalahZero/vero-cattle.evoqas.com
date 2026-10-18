@@ -21,7 +21,8 @@ use Illuminate\Support\Facades\DB;
 //    CashFlow            — Methodology 4
 //
 //  All amounts in company currency (EGP by default).
-//  Only status = 'posted' journal entries are included.
+//  Only 'posted' and 'reversed' journal entries are included: a reversed
+//  original stays in the ledger and its mirror entry cancels it. Drafts are excluded.
 //
 //  FIX (Session 65c — BalanceSheet parent rollup):
 //    Group/header accounts (allow_direct_posting = false) now receive
@@ -55,7 +56,7 @@ class FinancialReportService
         $opening = DB::table('journal_lines as jl')
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->where('je.company_id', $companyId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->whereDate('je.date', '<', $periodStart)
             ->groupBy('jl.account_id')
             ->select('jl.account_id',
@@ -68,7 +69,7 @@ class FinancialReportService
         $period = DB::table('journal_lines as jl')
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->where('je.company_id', $companyId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->whereBetween('je.date', [$periodStart, $periodEnd])
             ->groupBy('jl.account_id')
             ->select('jl.account_id',
@@ -118,10 +119,10 @@ class FinancialReportService
                 'name_ar'        => $account->name_ar,
                 'type'           => $account->type,
                 'normal_balance' => $account->normal_balance,
-                'opening'        => (float) bcadd($ob, '0', 2),
-                'period_debit'   => (float) bcadd($pd, '0', 2),
-                'period_credit'  => (float) bcadd($pc, '0', 2),
-                'closing'        => (float) bcadd($cb, '0', 2),
+                'opening'        => (float) \App\Support\Money::round($ob, 2),
+                'period_debit'   => (float) \App\Support\Money::round($pd, 2),
+                'period_credit'  => (float) \App\Support\Money::round($pc, 2),
+                'closing'        => (float) \App\Support\Money::round($cb, 2),
             ];
 
             $totalOb = bcadd($totalOb, $ob, 4);
@@ -142,12 +143,12 @@ class FinancialReportService
             'period_end'     => $periodEnd,
             'rows'           => $rows,
             'totals'         => [
-                'opening'      => (float) bcadd($totalOb, '0', 2),
-                'period_debit' => (float) bcadd($totalDr, '0', 2),
-                'period_credit'=> (float) bcadd($totalCr, '0', 2),
+                'opening'      => (float) \App\Support\Money::round($totalOb, 2),
+                'period_debit' => (float) \App\Support\Money::round($totalDr, 2),
+                'period_credit'=> (float) \App\Support\Money::round($totalCr, 2),
             ],
             'balanced'       => $balanced,
-            'imbalance'      => (float) bcadd($totalCb, '0', 2),
+            'imbalance'      => (float) \App\Support\Money::round($totalCb, 2),
         ];
     }
 
@@ -186,7 +187,7 @@ class FinancialReportService
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->join('accounts as a', 'a.id', '=', 'jl.account_id')
             ->where('je.company_id', $companyId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->whereBetween('je.date', [$from, $to])
             ->whereIn('a.type', ['revenue', 'cogs', 'expense'])
             ->groupBy('jl.account_id', 'a.code', 'a.name_en', 'a.name_ar', 'a.type', 'a.normal_balance')
@@ -217,12 +218,9 @@ class FinancialReportService
                 'name_ar'    => $line->name_ar,
                 // For revenue (credit-normal): amount = credit − debit
                 // For cogs/expense (debit-normal): amount = debit − credit
-                'amount'     => (float) bcadd(
-                    $line->type === 'revenue'
+                'amount'     => (float) \App\Support\Money::round($line->type === 'revenue'
                         ? bcsub($totalC, $totalD, 4)
-                        : bcsub($totalD, $totalC, 4),
-                    '0', 2
-                ),
+                        : bcsub($totalD, $totalC, 4), 2),
             ];
 
             match ($line->type) {
@@ -246,19 +244,19 @@ class FinancialReportService
 
         // Gross margin % — null-safe (avoid division by zero)
         $grossMarginPct = (bccomp($totalRevenue, '0', 4) > 0)
-            ? (float) bcadd(bcdiv(bcmul($grossProfit, '100', 6), $totalRevenue, 6), '0', 2)
+            ? (float) \App\Support\Money::round(bcdiv(bcmul($grossProfit, '100', 6), $totalRevenue, 6), 2)
             : null;
 
         return [
             'revenue_lines'    => $revenue,
             'cogs_lines'       => $cogs,
             'expense_lines'    => $expenses,
-            'total_revenue'    => (float) bcadd($totalRevenue,  '0', 2),
-            'total_cogs'       => (float) bcadd($totalCogs,     '0', 2),
-            'gross_profit'     => (float) bcadd($grossProfit,   '0', 2),
+            'total_revenue'    => (float) \App\Support\Money::round($totalRevenue, 2),
+            'total_cogs'       => (float) \App\Support\Money::round($totalCogs, 2),
+            'gross_profit'     => (float) \App\Support\Money::round($grossProfit, 2),
             'gross_margin_pct' => $grossMarginPct,
-            'total_expenses'   => (float) bcadd($totalExpenses, '0', 2),
-            'net_income'       => (float) bcadd($netIncome,     '0', 2),
+            'total_expenses'   => (float) \App\Support\Money::round($totalExpenses, 2),
+            'net_income'       => (float) \App\Support\Money::round($netIncome, 2),
         ];
     }
 
@@ -292,7 +290,7 @@ class FinancialReportService
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->join('accounts as a', 'a.id', '=', 'jl.account_id')
             ->where('je.company_id', $companyId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->whereDate('je.date', '<=', $asOfDate)
             ->whereIn('a.type', ['asset', 'liability', 'equity'])
             ->groupBy('jl.account_id', 'a.normal_balance')
@@ -404,7 +402,7 @@ class FinancialReportService
             &$emitSubtree, $balanceMap
         ): array {
             $out     = [];
-            $balance = (float) bcadd($balanceMap[$node->id] ?? '0', '0', 2);
+            $balance = (float) \App\Support\Money::round($balanceMap[$node->id] ?? '0', 2);
 
             // Always emit group headers; skip zero-balance posting leaves.
             if (!$node->allow_direct_posting || $balance != 0.0) {
@@ -483,8 +481,30 @@ class FinancialReportService
             };
         }
 
-        // Step 6 — Inject YTD net income as a synthetic equity line.
-        $fyStart = $this->fiscalYearStart($companyId, $asOfDate, $fiscalYearId);
+        // Step 6 — Inject earnings as synthetic equity lines.
+        //   RE_PRIOR : profit/loss of every period BEFORE the current fiscal year
+        //              that has not been closed into an equity account yet.
+        //              (Without it, last year's profit is missing from equity and
+        //               the balance sheet is out of balance by exactly that amount.)
+        //   RE_YTD   : profit/loss of the current fiscal year to the as-of date.
+        // 📌 METHODOLOGY REFERENCE: BalanceSheet (#7) — Assets = Liabilities + Equity
+        $fyStart       = $this->fiscalYearStart($companyId, $asOfDate, $fiscalYearId);
+        $priorTo       = $fyStart
+            ? \Illuminate\Support\Carbon::parse($fyStart)->subDay()->toDateString()
+            : $asOfDate;
+        $priorIncome   = $this->fetchPLData($companyId, '1900-01-01', $priorTo)['net_income'];
+        if ($priorIncome != 0) {
+            $equity[] = [
+                'account_id'           => null,
+                'parent_id'            => null,
+                'code'                 => 'RE_PRIOR',
+                'name_en'              => __('Retained Earnings — Prior Years'),
+                'name_ar'              => __('أرباح مرحّلة — سنوات سابقة'),
+                'balance'              => $priorIncome,
+                'allow_direct_posting' => false,
+            ];
+        }
+
         if ($fyStart) {
             $plData    = $this->fetchPLData($companyId, $fyStart, $asOfDate);
             $netIncome = $plData['net_income'];
@@ -528,7 +548,8 @@ class FinancialReportService
             };
         }
 
-        // Also include YTD net income in equity total
+        // Also include prior-year and current-year earnings in the equity total
+        $totalEquity = bcadd($totalEquity, (string) $priorIncome, 4);
         if (isset($netIncome)) {
             $totalEquity = bcadd($totalEquity, (string)$netIncome, 4);
         }
@@ -544,11 +565,11 @@ class FinancialReportService
             'assets'            => array_values($assets),
             'liabilities'       => array_values($liabilities),
             'equity'            => array_values($equity),
-            'total_assets'      => (float) bcadd($totalAssets,      '0', 2),
-            'total_liabilities' => (float) bcadd($totalLiabilities, '0', 2),
-            'total_equity'      => (float) bcadd($totalEquity,      '0', 2),
+            'total_assets'      => (float) \App\Support\Money::round($totalAssets, 2),
+            'total_liabilities' => (float) \App\Support\Money::round($totalLiabilities, 2),
+            'total_equity'      => (float) \App\Support\Money::round($totalEquity, 2),
             'balanced'          => $balanced,
-            'imbalance'         => (float) bcadd($imbalanceStr,     '0', 2),
+            'imbalance'         => (float) \App\Support\Money::round($imbalanceStr, 2),
         ];
     }
 
@@ -580,7 +601,7 @@ class FinancialReportService
                 ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
                 ->join('accounts as a', 'a.id', '=', 'jl.account_id')
                 ->where('je.company_id', $companyId)
-                ->where('je.status', 'posted')
+                ->whereIn('je.status', ['posted', 'reversed'])
                 ->whereDate('je.date', '<=', $date)
                 ->where('a.type', $type)
                 ->where('a.code', 'like', $prefix . '%')
@@ -598,7 +619,7 @@ class FinancialReportService
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->join('accounts as a', 'a.id', '=', 'jl.account_id')
             ->where('je.company_id', $companyId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->where('je.source_type', 'fixed_asset')
             ->whereBetween('je.date', [$dateFrom, $dateTo])
             ->where('a.type', 'expense')
@@ -655,24 +676,24 @@ class FinancialReportService
             'date_from'      => $dateFrom,
             'date_to'        => $dateTo,
             'operating' => [
-                'net_income'      => (float) bcadd($netIncome,    '0', 2),
-                'depreciation'    => (float) bcadd($depreciation, '0', 2),
-                'delta_ar'        => (float) bcadd($deltaAr,      '0', 2),
-                'delta_ap'        => (float) bcadd($deltaAp,      '0', 2),
-                'delta_inventory' => (float) bcadd($deltaInv,     '0', 2),
-                'total'           => (float) bcadd($operatingCf,  '0', 2),
+                'net_income'      => (float) \App\Support\Money::round($netIncome, 2),
+                'depreciation'    => (float) \App\Support\Money::round($depreciation, 2),
+                'delta_ar'        => (float) \App\Support\Money::round($deltaAr, 2),
+                'delta_ap'        => (float) \App\Support\Money::round($deltaAp, 2),
+                'delta_inventory' => (float) \App\Support\Money::round($deltaInv, 2),
+                'total'           => (float) \App\Support\Money::round($operatingCf, 2),
             ],
             'investing' => [
-                'fixed_asset_movement' => (float) bcadd($investingCf, '0', 2),
-                'total'                => (float) bcadd($investingCf, '0', 2),
+                'fixed_asset_movement' => (float) \App\Support\Money::round($investingCf, 2),
+                'total'                => (float) \App\Support\Money::round($investingCf, 2),
             ],
             'financing' => [
-                'loan_equity_movement' => (float) bcadd($financingCf, '0', 2),
-                'total'                => (float) bcadd($financingCf, '0', 2),
+                'loan_equity_movement' => (float) \App\Support\Money::round($financingCf, 2),
+                'total'                => (float) \App\Support\Money::round($financingCf, 2),
             ],
-            'net_change'   => (float) bcadd($netChange,   '0', 2),
-            'opening_cash' => (float) bcadd($openingCash, '0', 2),
-            'closing_cash' => (float) bcadd($closingCash, '0', 2),
+            'net_change'   => (float) \App\Support\Money::round($netChange, 2),
+            'opening_cash' => (float) \App\Support\Money::round($openingCash, 2),
+            'closing_cash' => (float) \App\Support\Money::round($closingCash, 2),
         ];
     }
 

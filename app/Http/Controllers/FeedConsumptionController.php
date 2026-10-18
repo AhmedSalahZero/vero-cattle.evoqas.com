@@ -234,10 +234,7 @@ class FeedConsumptionController extends Controller
 
                 // ── 5d: Compute total_cost via bcmath ─────────────
                 // 📌 METHODOLOGY REFERENCE: BcmathMonetaryPrecision (#39)
-                $totalCost = (float) bcadd(
-                    bcmul((string) $qtyKg, $unitCost, 4),
-                    '0', 2
-                );
+                $totalCost = (float) \App\Support\Money::round(bcmul((string) $qtyKg, $unitCost, 4), 2);
 
                 // ── 5e: Decrement stock ───────────────────────────
                 // Capture qty_after BEFORE decrement for the transaction record
@@ -352,6 +349,90 @@ class FeedConsumptionController extends Controller
         ]);
 
         return $this->batchStore($request);
+    }
+
+    // ── Update ────────────────────────────────────────────────────
+    //
+    // The edit panel in Feed/Consumption/Index.vue calls this route, but the method
+    // was missing — every save ended in a 500 error page.
+    //
+    // Rules (same philosophy as destroy()):
+    //   • LEGACY records (no inventory item) → date, quantity, costs and notes may be
+    //     edited: there is no stock or journal entry behind them.
+    //   • INVENTORY-LINKED records → stock, WAC cost, the animal selection (COGS) and a
+    //     posted T2 journal entry stand behind them, so everything except the notes is
+    //     locked. To correct a quantity the user deletes the record (stock is restored)
+    //     and records it again.
+    public function update(Request $request, FeedConsumption $feedConsumption)
+    {
+        $authUser = Auth::user();
+
+        abort_unless(
+            $authUser->is_super_admin ||
+            $authUser->hasPermissionTo('edit feed'),
+            403
+        );
+
+        $this->authorizeLot($authUser, $feedConsumption->lot_id);
+
+        $this->sanitizeNullableFields($request);
+
+        $validated = $request->validate([
+            'date'       => 'nullable|date',
+            'qty_kg'     => 'nullable|numeric|min:0',
+            'unit_cost'  => 'nullable|numeric|min:0',
+            'total_cost' => 'nullable|numeric|min:0',
+            'notes'      => 'nullable|string',
+        ]);
+
+        if ($feedConsumption->isLegacy()) {
+            $feedConsumption->update(array_filter([
+                'date'       => $validated['date'] ?? null,
+                'qty_kg'     => $validated['qty_kg'] ?? null,
+                'unit_cost'  => $validated['unit_cost'] ?? null,
+                'total_cost' => $validated['total_cost'] ?? null,
+            ], fn ($v) => $v !== null) + [
+                'notes' => $validated['notes'] ?? null,
+            ]);
+
+            return back()->with('success', 'تم الحفظ / Saved');
+        }
+
+        // Inventory-linked: refuse any change to the locked fields.
+        $changed = [];
+        if (isset($validated['date']) && $validated['date'] !== $feedConsumption->date?->toDateString()) {
+            $changed['date'] = true;
+        }
+        if (isset($validated['qty_kg'])
+            && bccomp((string) $validated['qty_kg'], (string) $feedConsumption->qty_kg, 3) !== 0) {
+            $changed['qty_kg'] = true;
+        }
+        foreach (['farm_id', 'lot_id', 'inventory_item_id', 'location_id'] as $locked) {
+            if ($request->filled($locked) && (int) $request->input($locked) !== (int) $feedConsumption->{$locked}) {
+                $changed[$locked] = true;
+            }
+        }
+        if (is_array($request->input('animal_ids'))) {
+            $stored = DB::table('feed_consumption_animals')
+                ->where('feed_consumption_id', $feedConsumption->id)
+                ->pluck('animal_id')->map(fn ($v) => (int) $v)->sort()->values()->all();
+            $sent = collect($request->input('animal_ids'))->map(fn ($v) => (int) $v)->sort()->values()->all();
+            if ($stored !== $sent) {
+                $changed['animal_ids'] = true;
+            }
+        }
+
+        if ($changed) {
+            $msg = 'لا يمكن تعديل التاريخ أو الكمية أو الصنف أو المخزن أو الحيوانات بعد تسجيل الاستهلاك (المخزون والقيد المحاسبي مرتبطان به). احذف السجل وأعد تسجيله. / '
+                 . 'Date, quantity, item, location and animals cannot be changed once consumption is recorded (stock and the journal entry depend on them). Delete the record and enter it again.';
+            throw \Illuminate\Validation\ValidationException::withMessages(
+                array_map(fn () => $msg, $changed)
+            );
+        }
+
+        $feedConsumption->update(['notes' => $validated['notes'] ?? null]);
+
+        return back()->with('success', 'تم الحفظ / Saved');
     }
 
     // ── Destroy ───────────────────────────────────────────────────
@@ -480,7 +561,7 @@ class FeedConsumptionController extends Controller
         $period = (int) date('n', strtotime($date));
 
         // 📌 BcmathMonetaryPrecision (#39)
-        $amount = (float) bcadd((string) $totalCost, '0', 2);
+        $amount = (float) \App\Support\Money::round((string) $totalCost, 2);
 
         $je = JournalEntry::create([
             'company_id'     => $companyId,
@@ -648,7 +729,7 @@ class FeedConsumptionController extends Controller
     {
         if ($authUser->is_super_admin) return;
         $lot = Lot::with('farm')->findOrFail($lotId);
-        abort_unless($lot->farm->company_id === $authUser->company_id, 403);
+        abort_unless((int) $lot->farm->company_id === (int) $authUser->company_id, 403);
     }
    
 

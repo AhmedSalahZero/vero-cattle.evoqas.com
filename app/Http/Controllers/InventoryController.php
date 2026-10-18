@@ -439,7 +439,7 @@ class InventoryController extends Controller
         if (!empty($validated['supplier_id'])) {
             $supplier = Supplier::findOrFail($validated['supplier_id']);
             abort_unless(
-                $supplier->company_id === $stockRow->company_id,
+                (int) $supplier->company_id === (int) $stockRow->company_id,
                 422,
                 __('validation.inventory.supplier_company_mismatch')
             );
@@ -508,10 +508,7 @@ class InventoryController extends Controller
                 'qty'         => abs($qty),
                 'unit_cost'   => $unitCost,
                 // 📌 BcmathMonetaryPrecision (#38) — total is a monetary value
-                'total'       => (float) bcadd(
-                                    bcmul((string)abs($qty), (string)$unitCost, 4),
-                                    '0', 2
-                                 ),
+                'total'       => (float) \App\Support\Money::round(bcmul((string)abs($qty), (string)$unitCost, 4), 2),
                 'qty_after'   => $stockRow->qty_on_hand,
                 'wac_after'   => $stockRow->unit_cost,
                 'supplier_id' => $validated['supplier_id'] ?? null,   // ← NEW
@@ -625,7 +622,7 @@ class InventoryController extends Controller
         if (!empty($validated['supplier_id'])) {
             $supplier = Supplier::findOrFail($validated['supplier_id']);
             abort_unless(
-                $supplier->company_id === $inventoryTransaction->company_id,
+                (int) $supplier->company_id === (int) $inventoryTransaction->company_id,
                 422,
                 __('validation.inventory.supplier_company_mismatch')
             );

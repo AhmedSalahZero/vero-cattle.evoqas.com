@@ -55,7 +55,7 @@ class AccountController extends Controller
         $balances = DB::table('journal_lines as jl')
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->where('je.company_id', $companyId)
-            ->where('je.status', 'posted')
+            ->whereIn('je.status', ['posted', 'reversed'])
             ->groupBy('jl.account_id')
             ->select(
                 'jl.account_id',
@@ -206,7 +206,7 @@ class AccountController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit accounts') && $authUser->company_id === $account->company_id),
+            ($authUser->hasPermissionTo('edit accounts') && (int) $authUser->company_id === (int) $account->company_id),
             403
         );
 
@@ -230,7 +230,7 @@ class AccountController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit accounts') && $authUser->company_id === $account->company_id),
+            ($authUser->hasPermissionTo('edit accounts') && (int) $authUser->company_id === (int) $account->company_id),
             403
         );
 
@@ -282,7 +282,7 @@ class AccountController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('delete accounts') && $authUser->company_id === $account->company_id),
+            ($authUser->hasPermissionTo('delete accounts') && (int) $authUser->company_id === (int) $account->company_id),
             403
         );
 
@@ -303,11 +303,28 @@ class AccountController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit accounts') && $authUser->company_id === $account->company_id),
+            ($authUser->hasPermissionTo('edit accounts') && (int) $authUser->company_id === (int) $account->company_id),
             403
         );
 
         abort_if($account->is_system && $account->is_active, 422, __('messages.account_system_protected'));
+
+        // QA-075: the Trial Balance and Balance Sheet only list ACTIVE accounts. Deactivating an account that still
+        // has a balance would make its amounts silently disappear from the reports (and break the balance check).
+        if ($account->is_active) {
+            $net = DB::table('journal_lines as jl')
+                ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
+                ->where('je.company_id', $account->company_id)
+                ->where('jl.account_id', $account->id)
+                ->whereIn('je.status', ['posted', 'reversed'])
+                ->selectRaw('COALESCE(SUM(jl.debit),0) - COALESCE(SUM(jl.credit),0) as net')
+                ->value('net');
+            abort_if(
+                bccomp((string) ($net ?? '0'), '0', 2) !== 0,
+                422,
+                'This account still has a balance of ' . number_format((float) $net, 2) . '. Move the balance to another account first, then deactivate it.'
+            );
+        }
 
         $account->update(['is_active' => !$account->is_active]);
 

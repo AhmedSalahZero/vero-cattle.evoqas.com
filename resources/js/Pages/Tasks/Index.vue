@@ -2,6 +2,9 @@
   <Head title="My Tasks" />
   <AuthenticatedLayout>
     <div class="min-h-screen bg-gray-950 text-white">
+      <!-- QA-084: refused delete / status change -->
+      <div v-if="actionError" class="fixed top-4 inset-x-4 z-50 max-w-xl mx-auto bg-red-900/90 border border-red-600 text-red-100 text-sm rounded-lg px-4 py-3 shadow-lg cursor-pointer"
+           role="alert" @click="actionError = ''">{{ actionError }}</div>
 
       <!-- ══ PAGE HEADER ══ -->
       <div class="bg-gray-900 border-b border-gray-800">
@@ -315,6 +318,8 @@
 
             </div>
 
+            <!-- QA-084: why a save was refused -->
+            <p v-if="errors._form" class="px-6 pb-2 text-red-400 text-sm">{{ errors._form }}</p>
             <!-- Footer -->
             <div class="px-6 py-4 border-t border-gray-800 flex justify-end gap-3 flex-shrink-0">
               <button @click="modal.open = false"
@@ -369,6 +374,7 @@
 import { ref, computed, reactive } from 'vue'
 import { Head, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
+import { localToday } from '@/Composables/useLocale'
 
 const props = defineProps({
   tasks:     { type: Array,  default: () => [] },
@@ -394,6 +400,24 @@ const filterStatus   = ref('all')
 const filterPriority = ref('all')
 const search         = ref('')
 const saving         = ref(false)
+// QA-084: a refused save / delete / status change must be SHOWN, and the screen must not pretend it worked
+const actionError    = ref('')
+let actionErrorTimer = null
+function showActionError(msg) {
+  actionError.value = msg
+  clearTimeout(actionErrorTimer)
+  actionErrorTimer = setTimeout(() => { actionError.value = '' }, 8000)
+}
+async function readFailure(res) {
+  try {
+    const data = await res.json()
+    if (data?.errors) return Object.values(data.errors).flat().join(' ')
+    if (data?.message) return data.message
+  } catch (e) { /* not JSON */ }
+  return res.status === 419 ? 'Your session has expired. Please reload the page and try again.'
+       : res.status === 403 ? 'You do not have permission to do this.'
+       : 'The server could not complete this action (' + res.status + ').'
+}
 const deleteTarget   = ref(null)
 
 const modal = reactive({ open: false, editing: false, id: null })
@@ -425,8 +449,10 @@ const priorityFilters = [
 
 const filteredTasks = computed(() => {
   return tasks.value.filter(t => {
+    // QA-085: the "Due Today" card used to show the OVERDUE tasks instead
+    if (filterStatus.value === 'due_today' && !(t.expected_end_date === localToday() && t.status !== 'completed' && t.status !== 'cancelled')) return false
     if (filterStatus.value === 'overdue' && !t.is_overdue) return false
-    if (filterStatus.value !== 'all' && filterStatus.value !== 'overdue' && t.status !== filterStatus.value) return false
+    if (filterStatus.value !== 'all' && filterStatus.value !== 'overdue' && filterStatus.value !== 'due_today' && t.status !== filterStatus.value) return false
     if (filterPriority.value !== 'all' && t.priority !== filterPriority.value) return false
     if (search.value) {
       const q = search.value.toLowerCase()
@@ -443,7 +469,7 @@ const kpiCards = computed(() => [
   { label: 'In Progress', value: counts.value.in_progress, color: 'text-blue-400', filter: 'in_progress' },
   { label: 'Completed',   value: counts.value.completed,   color: 'text-green-400', filter: 'completed' },
   { label: 'Overdue',     value: counts.value.overdue,     color: 'text-red-400',  filter: 'overdue' },
-  { label: 'Due Today',   value: counts.value.due_today,   color: 'text-amber-400', filter: 'overdue' },
+  { label: 'Due Today',   value: counts.value.due_today,   color: 'text-amber-400', filter: 'due_today' },
 ])
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -452,11 +478,13 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// QA-083: pure calendar arithmetic. The old code mixed UTC and local time, so for a task that crosses the
+// Egyptian clock change (end of April / end of October) the end date came out one day EARLY
+// (20 Apr + 12 days showed 30 Apr instead of 1 May).
 function addDays(dateStr, days) {
-  if (!dateStr || !days) return ''
-  const d = new Date(dateStr)
-  d.setDate(d.getDate() + days - 1)
-  return d.toISOString().split('T')[0]
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateStr || ''))
+  if (!m || !days) return ''
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + Number(days) - 1)).toISOString().slice(0, 10)
 }
 
 function calcExpectedEnd() {
@@ -540,16 +568,26 @@ function getCsrfToken() {
 
 async function saveTask() {
   if (!form.title.trim()) { errors.title = 'Task name is required.'; return }
+  if (saving.value) return
   saving.value = true
+  Object.keys(errors).forEach(k => delete errors[k])
   const url    = modal.editing ? `/tasks/${modal.id}` : '/tasks'
   const method = modal.editing ? 'PUT' : 'POST'
   try {
     const res  = await fetch(url, {
       method,
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-XSRF-TOKEN': getCsrfToken() },
       body: JSON.stringify(form),
     })
+    if (!res.ok) {
+      // keep the modal open with everything typed, and say what went wrong
+      let data = null
+      try { data = await res.clone().json() } catch (e) { /* not JSON */ }
+      if (data?.errors) Object.entries(data.errors).forEach(([k, v]) => { errors[k] = Array.isArray(v) ? v[0] : v })
+      errors._form = await readFailure(res)
+      return
+    }
     const data = await res.json()
     if (data.success) {
       if (modal.editing) {
@@ -571,11 +609,14 @@ async function saveTask() {
 function confirmDelete(task) { deleteTarget.value = task }
 async function deleteTask() {
   const id = deleteTarget.value.id
-  await fetch(`/tasks/${id}`, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: { 'X-XSRF-TOKEN': getCsrfToken() },
-  })
+  try {
+    const res = await fetch(`/tasks/${id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-XSRF-TOKEN': getCsrfToken() },
+    })
+    if (!res.ok) { showActionError(await readFailure(res)); deleteTarget.value = null; return }
+  } catch (e) { showActionError('The server could not be reached. The task was NOT deleted.'); deleteTarget.value = null; return }
   tasks.value = tasks.value.filter(t => t.id !== id)
   rebuildCounts()
   deleteTarget.value = null
@@ -585,12 +626,15 @@ async function deleteTask() {
 const statusCycle = { not_started: 'in_progress', in_progress: 'completed', completed: 'not_started', cancelled: 'not_started' }
 async function cycleStatus(task) {
   const next = statusCycle[task.status]
-  await fetch(`/tasks/${task.id}/status`, {
-    method: 'PATCH',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrfToken() },
-    body: JSON.stringify({ status: next }),
-  })
+  try {
+    const res = await fetch(`/tasks/${task.id}/status`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-XSRF-TOKEN': getCsrfToken() },
+      body: JSON.stringify({ status: next }),
+    })
+    if (!res.ok) { showActionError(await readFailure(res)); return }
+  } catch (e) { showActionError('The server could not be reached. The status was NOT changed.'); return }
   task.status = next
   rebuildCounts()
 }

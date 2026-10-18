@@ -104,16 +104,19 @@ class LivestockReceiptService
                 $weightKg = (string) ($animal['weight_kg'] ?? 0);
 
                 // Individual animal cost: weight × PO price per kg
-                $pricePerHead = bcmul($weightKg, $pricePerKg, 4);
-                $animal['purchase_price']  = (float) bcadd($pricePerHead, '0', 2);
+                // Round each head to whole cents FIRST (half-up) and add up the rounded
+                // amounts, so the batch total / journal entry is exactly the sum of what is
+                // stored on the animals. (the old bcadd(x,'0',2) only truncated, which lost cents.)
+                $pricePerHead = \App\Support\Money::round(bcmul($weightKg, $pricePerKg, 4), 2);
+                $animal['purchase_price']  = (float) $pricePerHead;
                 $animal['po_price_per_kg'] = (float) $pricePerKg;
 
-                $subtotal = bcadd($subtotal, $pricePerHead, 4);
+                $subtotal = bcadd($subtotal, $pricePerHead, 2);
             }
             unset($animal);
 
-            // Round subtotal to 2dp for storage
-            $subtotalStored = (float) bcadd($subtotal, '0', 2);
+            // Already a sum of 2dp amounts — nothing left to round
+            $subtotalStored = (float) $subtotal;
 
             // Unit cost per head (for inventory_transaction.unit_cost)
             $unitCost = ($batchCount > 0)
@@ -145,7 +148,17 @@ class LivestockReceiptService
             // — active animals are eligible for reserveAnimals() in Sales
             $now = Carbon::now();
 
-            foreach ($animalsData as $animalData) {
+            // QA-035: freight is split equally, to the cent; the LAST animal takes the cents that remain,
+            // so the freight on the animals adds up exactly to the freight of the batch
+            // (1000 over 3 animals = 333.33 + 333.33 + 333.34, not 999.99).
+            $freightBase = $batchCount > 0
+                ? \App\Support\Money::round(bcdiv((string) $freightAlloc, (string) $batchCount, 6), 2)
+                : '0.00';
+            $freightLast = $batchCount > 0
+                ? bcsub(\App\Support\Money::round((string) $freightAlloc, 2), bcmul($freightBase, (string) ($batchCount - 1), 2), 2)
+                : '0.00';
+
+            foreach (array_values($animalsData) as $animalIndex => $animalData) {
                 $animal = Animal::create([
                     'company_id'          => $po->company_id,
                     'farm_id'             => $po->farm_id,
@@ -166,15 +179,19 @@ class LivestockReceiptService
                     'purchase_price'      => $animalData['purchase_price'],    // computed above
                     'purchase_weight_kg'  => $animalData['weight_kg'] ?? null,
                     'po_price_per_kg'     => $animalData['po_price_per_kg'],   // immutable snapshot
-                    'freight_cost'        => $batchCount > 0
-                                                ? round((float) $freightAlloc / $batchCount, 2)
-                                                : 0,
+                    'freight_cost'        => (float) ($animalIndex === $batchCount - 1 ? $freightLast : $freightBase),
                     'status'              => 'active',
                     'status_date'         => $receiptDate,
                     'notes'               => $animalData['notes'] ?? null,
                     'created_at'          => $now,
                     'updated_at'          => $now,
                 ]);
+
+                // ── STEP 4a: Start the animal's lot history ──────────
+                // 📌 METHODOLOGY REFERENCE: LivestockOperationalCostFlow (#43) §4
+                // Animal-days for the monthly labour/overhead accrual are counted
+                // from this row, starting on the receipt date.
+                app(AnimalLotHistoryService::class)->open($animal, Carbon::parse($receiptDate)->toDateString());
 
                 // ── STEP 4b: Write arrival weight to weight_records ───
                 // The receiving user weighs each animal on arrival.
@@ -390,8 +407,8 @@ class LivestockReceiptService
             'entry_type'     => 'procurement',
             'source_type'    => AnimalReceiptBatch::class,
             'source_id'      => $batch->id,
-            'total_debit'    => (float) bcadd($amount, '0', 2),
-            'total_credit'   => (float) bcadd($amount, '0', 2),
+            'total_debit'    => (float) \App\Support\Money::round($amount, 2),
+            'total_credit'   => (float) \App\Support\Money::round($amount, 2),
             'posted_by'      => Auth::id(),
             'posted_at'      => now(),
         ]);
@@ -400,7 +417,7 @@ class LivestockReceiptService
         JournalLine::create([
             'entry_id'   => $je->id,
             'account_id' => $wipAccount->id,
-            'debit'      => (float) bcadd($amount, '0', 2),
+            'debit'      => (float) \App\Support\Money::round($amount, 2),
             'credit'     => 0,
             'farm_id'    => $po->farm_id,
             'lot_id'     => $po->lot_id,
@@ -412,7 +429,7 @@ class LivestockReceiptService
             'entry_id'   => $je->id,
             'account_id' => $accrualAccount->id,
             'debit'      => 0,
-            'credit'     => (float) bcadd($amount, '0', 2),
+            'credit'     => (float) \App\Support\Money::round($amount, 2),
             'farm_id'    => $po->farm_id,
             'memo'       => $memo,
         ]);

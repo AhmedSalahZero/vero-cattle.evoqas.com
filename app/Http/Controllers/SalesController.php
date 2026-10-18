@@ -162,7 +162,7 @@ class SalesController extends Controller
 
         $request->validate([
             'lines'                  => 'required|array|min:1',
-            'lines.*.animal_id'      => 'required|exists:animals,id',
+            'lines.*.animal_id'      => 'required|exists:animals,id|distinct',
             'lines.*.slaughter_id'   => 'nullable|exists:slaughter_records,id',
             'lines.*.pricing_mode'   => 'required|in:per_kg,per_head',
             'lines.*.price_per_kg'   => 'nullable|numeric|min:0',
@@ -170,6 +170,18 @@ class SalesController extends Controller
             'lines.*.qty_kg'         => 'nullable|numeric|min:0',
             'lines.*.notes'          => 'nullable|string|max:500',
         ]);
+
+        // QA-017: the header totals are CALCULATED here from the lines — whatever the browser sent is ignored.
+        $totals = $this->computeSaleTotals($request->input('lines', []), $validated['discount'] ?? 0);
+        $validated['subtotal']     = $totals['subtotal'];
+        $validated['total_amount'] = $totals['total'];
+
+        // QA-018: the customer must belong to the same company as the sale
+        $saleCompanyId = $this->resolveCompanyId($request);
+        abort_unless(
+            \App\Models\Customer::where('id', $validated['customer_id'])->where('company_id', $saleCompanyId)->exists(),
+            422, 'Customer does not belong to this company.'
+        );
 
         $companyId = $this->resolveCompanyId($request);
 
@@ -179,6 +191,9 @@ class SalesController extends Controller
             : $this->generateInvoiceRef($companyId, $validated['farm_id'], $validated['date']);
 
         DB::transaction(function () use ($validated, $companyId, $invoiceRef, $request) {
+            // QA-024: an animal already sold, or held by another sale, cannot be put on a new sale
+            $this->assertAnimalsStillAvailable($request->input('lines', []), null);
+
             $record = SalesRecord::create([
                 'company_id'         => $companyId,
                 'farm_id'            => $validated['farm_id'],
@@ -285,7 +300,7 @@ class SalesController extends Controller
 
         $request->validate([
             'lines'                  => 'required|array|min:1',
-            'lines.*.animal_id'      => 'required|exists:animals,id',
+            'lines.*.animal_id'      => 'required|exists:animals,id|distinct',
             'lines.*.slaughter_id'   => 'nullable|exists:slaughter_records,id',
             'lines.*.pricing_mode'   => 'required|in:per_kg,per_head',
             'lines.*.price_per_kg'   => 'nullable|numeric|min:0',
@@ -294,7 +309,22 @@ class SalesController extends Controller
             'lines.*.notes'          => 'nullable|string|max:500',
         ]);
 
+        // QA-017: the header totals are CALCULATED here from the lines — whatever the browser sent is ignored.
+        $totals = $this->computeSaleTotals($request->input('lines', []), $validated['discount'] ?? 0);
+        $validated['subtotal']     = $totals['subtotal'];
+        $validated['total_amount'] = $totals['total'];
+
+        // QA-018: the (possibly changed) farm and customer must belong to this sale's company
+        $this->authorizeFarm($authUser, (int) $validated['farm_id']);
+        abort_unless(
+            \App\Models\Customer::where('id', $validated['customer_id'])->where('company_id', $salesRecord->company_id)->exists(),
+            422, 'Customer does not belong to this company.'
+        );
+
         DB::transaction(function () use ($salesRecord, $validated, $request) {
+            // QA-024: same protection when a draft sale is edited (its own animals are fine)
+            $this->assertAnimalsStillAvailable($request->input('lines', []), $salesRecord);
+
             // 📌 METHODOLOGY REFERENCE: AnimalSoftLock (#27)
             $oldAnimalIds = $salesRecord->lines()->pluck('animal_id')->filter()->unique()->values()->all();
             $newAnimalIds = collect($request->input('lines', []))->pluck('animal_id')->filter()->unique()->values()->all();
@@ -364,6 +394,20 @@ class SalesController extends Controller
 
         $revenueAccountId = (int) $request->input('revenue_account_id');
 
+        // A sale must reach the books: refuse to confirm when no OPEN fiscal year
+        // covers its date (otherwise the invoice exists but revenue is never posted).
+        $saleDay = $salesRecord->date->toDateString();
+        $hasOpenYear = FiscalYear::where('company_id', $companyId)
+            ->where('status', 'open')
+            ->whereDate('start_date', '<=', $saleDay)
+            ->whereDate('end_date', '>=', $saleDay)
+            ->exists();
+        if (!$hasOpenYear) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'date' => __('messages.fiscal_year_not_open'),
+            ]);
+        }
+
         $salesRecord->load('lines.animal:id,tag');
 
         DB::transaction(function () use ($salesRecord, $companyId, $revenueAccountId) {
@@ -401,6 +445,10 @@ class SalesController extends Controller
                         'status'      => 'sold',
                         'status_date' => $fresh->date->toDateString(),
                     ]);
+
+                // The animals leave their lot on the sale date (closes their animal-days)
+                app(\App\Services\AnimalLotHistoryService::class)
+                    ->close($animalIds, $fresh->date->toDateString(), 'sold');
             }
 
             // Link AR invoice and advance status
@@ -525,6 +573,9 @@ class SalesController extends Controller
                 Animal::whereIn('id', $animalIds)
                     ->where('status', 'sold')
                     ->update(['status' => 'active', 'status_date' => null]);
+
+                // Back in their lot as if never sold
+                app(\App\Services\AnimalLotHistoryService::class)->reopen($animalIds);
             }
 
             $salesRecord->update(['status' => 'cancelled']);
@@ -781,7 +832,7 @@ class SalesController extends Controller
         }
 
         // 📌 BcmathMonetaryPrecision (#38): all amounts via bcmath
-        $totalEgp = bcadd((string) $sale->total_amount, '0', 2);
+        $totalEgp = \App\Support\Money::round((string) $sale->total_amount, 2);
 
         // ── Build T5a reference ───────────────────────────────────
         $period    = (int) $sale->date->format('n');
@@ -866,7 +917,7 @@ class SalesController extends Controller
             return;
         }
 
-        $cogsStored = (float) bcadd($totalCogs, '0', 2);
+        $cogsStored = (float) \App\Support\Money::round($totalCogs, 2);
 
         $t5b = JournalEntry::create([
             'company_id'     => $companyId,
@@ -1064,6 +1115,70 @@ class SalesController extends Controller
      * RISK-F1: bcmath for line totals.
      * SALE-F1: cogs_per_head and gross_margin populated.
      */
+    /**
+     * QA-017 — one line's total in cents, rounded half-up:
+     *   per kg   → price per kg × kg      per head → price per head
+     */
+    /**
+     * QA-024 — protect against selling the same animal twice (two people at the same time,
+     * or a form left open). Conservative on purpose: only refuses an animal that is
+     *   - already SOLD, or
+     *   - RESERVED by ANOTHER sale.
+     * Animals already on THIS sale are always fine. The rows are locked while checking, so two
+     * simultaneous saves cannot both pass.
+     */
+    private function assertAnimalsStillAvailable(array $lines, ?SalesRecord $current): void
+    {
+        $ids = collect($lines)->pluck('animal_id')->filter()->map(fn ($v) => (int) $v)->unique()->values();
+        if ($ids->isEmpty()) {
+            return;
+        }
+        $own = $current ? $current->lines()->pluck('animal_id')->map(fn ($v) => (int) $v)->all() : [];
+        $toCheck = $ids->reject(fn ($id) => in_array($id, $own, true));
+        if ($toCheck->isEmpty()) {
+            return;
+        }
+
+        $animals = Animal::whereIn('id', $toCheck->all())->lockForUpdate()->get(['id', 'tag', 'status']);
+        foreach ($animals as $a) {
+            if (in_array($a->status, ['sold', 'reserved'], true)) {
+                abort(422, 'Animal ' . $a->tag . ' is no longer available — it is already '
+                    . ($a->status === 'sold' ? 'sold' : 'on another sale')
+                    . '. Remove it from this sale and try again.');
+            }
+        }
+    }
+
+    private function saleLineTotal(array $line): string
+    {
+        $mode = $line['pricing_mode'] ?? 'per_head';
+        $perKg = isset($line['price_per_kg'])   && $line['price_per_kg']   !== '' ? (string) $line['price_per_kg']   : null;
+        $perHd = isset($line['price_per_head']) && $line['price_per_head'] !== '' ? (string) $line['price_per_head'] : null;
+        $qty   = isset($line['qty_kg'])         && $line['qty_kg']         !== '' ? (string) $line['qty_kg']         : null;
+
+        if ($mode === 'per_kg' && $perKg !== null && $qty !== null) {
+            return \App\Support\Money::round(bcmul($perKg, $qty, 6), 2);
+        }
+        return \App\Support\Money::round($perHd ?? '0', 2);
+    }
+
+    /**
+     * QA-017 — header totals from the lines:  subtotal = Σ line totals,  total = subtotal − discount (never below 0).
+     * @return array{subtotal: string, total: string}
+     */
+    private function computeSaleTotals(array $lines, $discount): array
+    {
+        $subtotal = '0.00';
+        foreach ($lines as $line) {
+            $subtotal = bcadd($subtotal, $this->saleLineTotal($line), 2);
+        }
+        $total = bcsub($subtotal, \App\Support\Money::round((string) ($discount ?: 0), 2), 2);
+        if (bccomp($total, '0', 2) < 0) {
+            $total = '0.00';
+        }
+        return ['subtotal' => $subtotal, 'total' => $total];
+    }
+
     private function syncLines(SalesRecord $record, array $lines, int $companyId): void
     {
         abort_unless(
@@ -1080,12 +1195,8 @@ class SalesController extends Controller
             $pricePerHd  = isset($line['price_per_head']) && $line['price_per_head'] !== '' ? (float) $line['price_per_head'] : null;
             $qtyKg       = isset($line['qty_kg'])         && $line['qty_kg']         !== '' ? (float) $line['qty_kg']         : null;
 
-            // 📌 RISK-F1: bcmath line total
-            if ($pricingMode === 'per_kg' && $pricePerKg !== null && $qtyKg !== null) {
-                $lineTotal = (float) bcmul((string)$pricePerKg, (string)$qtyKg, 4);
-            } else {
-                $lineTotal = $pricePerHd ?? 0.0;
-            }
+            // 📌 RISK-F1: bcmath line total — rounded to cents (QA-017), same rule as the header total
+            $lineTotal = (float) $this->saleLineTotal($line);
 
             // 📌 SALE-F1: cogs_per_head and gross_margin
             $cogsPerHead = null;

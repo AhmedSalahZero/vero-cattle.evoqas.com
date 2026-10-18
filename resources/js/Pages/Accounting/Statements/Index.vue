@@ -705,6 +705,8 @@ const txLabels = {
   transfer_in:       { en: 'Transfer In', ar: 'تحويل وارد' },
   transfer_out:      { en: 'Transfer Out', ar: 'تحويل صادر' },
   livestock_receipt: { en: 'Livestock Receipt', ar: 'استلام ماشية' },
+  mix_out:           { en: 'Mix Out (to WIP)', ar: 'صرف للخلط' },
+  mix_in:            { en: 'Mix In', ar: 'وارد من الخلط' },
 }
 
 function txTypeLabel(type) {
@@ -720,6 +722,8 @@ function txTypeBadge(type) {
     adjustment:   'cv-badge-info',
     transfer_in:  'cv-badge-success',
     transfer_out: 'cv-badge-warning',
+    mix_out:      'cv-badge-warning',
+    mix_in:       'cv-badge-success',
   }
   return map[type] || 'cv-badge-neutral'
 }

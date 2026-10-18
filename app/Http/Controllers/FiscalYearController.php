@@ -111,7 +111,7 @@ class FiscalYearController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('edit fiscal_years') && $authUser->company_id === $fiscalYear->company_id),
+            ($authUser->hasPermissionTo('edit fiscal_years') && (int) $authUser->company_id === (int) $fiscalYear->company_id),
             403
         );
 
@@ -141,7 +141,7 @@ class FiscalYearController extends Controller
         // Only Farm Owner or Super Admin may lock
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasRole('Farm Owner') && $authUser->company_id === $fiscalYear->company_id),
+            ($authUser->hasRole('Farm Owner') && (int) $authUser->company_id === (int) $fiscalYear->company_id),
             403
         );
 
@@ -159,7 +159,7 @@ class FiscalYearController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasRole('Farm Owner') && $authUser->company_id === $fiscalYear->company_id),
+            ($authUser->hasRole('Farm Owner') && (int) $authUser->company_id === (int) $fiscalYear->company_id),
             403
         );
 
@@ -181,7 +181,7 @@ class FiscalYearController extends Controller
 
         abort_unless(
             $authUser->is_super_admin ||
-            ($authUser->hasPermissionTo('delete fiscal_years') && $authUser->company_id === $fiscalYear->company_id),
+            ($authUser->hasPermissionTo('delete fiscal_years') && (int) $authUser->company_id === (int) $fiscalYear->company_id),
             403
         );
 

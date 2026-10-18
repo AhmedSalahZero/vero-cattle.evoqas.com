@@ -161,6 +161,8 @@ class ProcurementController extends Controller
         if ($poType === 'inventory') {
 
             $validated = $this->validateInventoryPoRecord($request);
+            // QA-026: totals are CALCULATED here — whatever the browser sent is ignored
+            $validated = array_merge($validated, $this->computePoTotals('inventory', $validated, $request->input('item_lines', [])));
             $this->authorizeFarm($authUser, $validated['farm_id']);
             $companyId = $this->resolveProcurementCompanyId($authUser, $validated['farm_id'], $request);
 
@@ -196,6 +198,8 @@ class ProcurementController extends Controller
         } else {
 
             $validated = $this->validateRecord($request);
+            // QA-026: totals are CALCULATED here — whatever the browser sent is ignored
+            $validated = array_merge($validated, $this->computePoTotals('cattle', $validated, []));
             $this->authorizeFarm($authUser, $validated['farm_id'] ?? null);
             $companyId = $this->resolveProcurementCompanyId($authUser, $validated['farm_id'] ?? null, $request);
 
@@ -361,6 +365,8 @@ class ProcurementController extends Controller
         if ($procurementRecord->po_type === 'inventory') {
 
             $validated = $this->validateInventoryPoRecord($request);
+            // QA-026: totals are CALCULATED here — whatever the browser sent is ignored
+            $validated = array_merge($validated, $this->computePoTotals('inventory', $validated, $request->input('item_lines', [])));
 
             DB::transaction(function () use ($procurementRecord, $validated, $request) {
                 $procurementRecord->update([
@@ -383,6 +389,8 @@ class ProcurementController extends Controller
         } else {
 
             $validated = $this->validateRecord($request, $procurementRecord->id);
+            // QA-026: totals are CALCULATED here — whatever the browser sent is ignored
+            $validated = array_merge($validated, $this->computePoTotals('cattle', $validated, []));
 
             DB::transaction(function () use ($procurementRecord, $validated, $request) {
                 $procurementRecord->update([
@@ -544,11 +552,12 @@ class ProcurementController extends Controller
             'animals'                    => 'required|array|min:1|max:5000',
             'animals.*.tag'              => [
                 'required', 'string', 'max:255',
+                'distinct',   // QA-037: the same tag twice in one receipt is refused with a clear message
                 Rule::unique('animals', 'tag')
                     ->where('company_id', $procurementRecord->company_id),
             ],
             'animals.*.sex'              => ['required', Rule::in(['male', 'female', 'castrated'])],
-            'animals.*.weight_kg'        => 'required|numeric|min:0.1',
+            'animals.*.weight_kg'        => 'required|numeric|min:0.1|max:10000',
             'animals.*.rfid'             => 'nullable|string|max:255',
             'animals.*.breed'            => 'nullable|string|max:255',
             'animals.*.color'            => 'nullable|string|max:255',
@@ -629,9 +638,12 @@ class ProcurementController extends Controller
 
         $this->sanitizeNullableFields($request);
         $validated = $this->validateInventoryPoRecord($request);
+        // QA-026: totals are CALCULATED here — whatever the browser sent is ignored
+        $validated = array_merge($validated, $this->computePoTotals('inventory', $validated, $request->input('item_lines', [])));
         $this->authorizeFarm($authUser, $validated['farm_id']);
 
         $companyId = $this->resolveProcurementCompanyId($authUser, $validated['farm_id'], $request);
+        $this->assertInventoryPoRefsBelongToCompany($companyId, $validated['supplier_id'], $request->input('item_lines', []));
 
         DB::transaction(function () use ($validated, $companyId, $request) {
 
@@ -731,6 +743,10 @@ class ProcurementController extends Controller
 
         $this->sanitizeNullableFields($request);
         $validated = $this->validateInventoryPoRecord($request);
+        // QA-026: totals are CALCULATED here — whatever the browser sent is ignored
+        $validated = array_merge($validated, $this->computePoTotals('inventory', $validated, $request->input('item_lines', [])));
+
+        $this->assertInventoryPoRefsBelongToCompany((int) $procurementRecord->company_id, $validated['supplier_id'], $request->input('item_lines', []));
 
         DB::transaction(function () use ($procurementRecord, $validated, $request) {
             $procurementRecord->update([
@@ -868,6 +884,11 @@ class ProcurementController extends Controller
             'lines.*.location_id'                     => 'required|exists:inventory_locations,id',
             'lines.*.notes'                           => 'nullable|string|max:500',
         ]);
+
+        // Receiving into another company's store room would mix stock between tenants.
+        foreach ($request->input('lines', []) as $ln) {
+            $this->assertLocationBelongsToCompany((int) $procurementRecord->company_id, (int) $ln['location_id'], 'lines.*.location_id');
+        }
 
         $batch = $this->inventoryReceiptService->confirmReceipt(
             procurementId: $procurementRecord->id,
@@ -1244,11 +1265,90 @@ class ProcurementController extends Controller
 
     // ── Shared helpers ────────────────────────────────────────────
 
+
+    /**
+     * An inventory PO may only point at its own company's supplier, items and
+     * store rooms. Plain "exists" rules would accept another tenant's ids.
+     */
+    private function assertInventoryPoRefsBelongToCompany(int $companyId, $supplierId, array $lines): void
+    {
+        $bad = [];
+
+        if (!\App\Models\Supplier::where('id', $supplierId)->where('company_id', $companyId)->exists()) {
+            $bad['supplier_id'] = __('validation.exists', ['attribute' => 'supplier']);
+        }
+
+        foreach ($lines as $i => $line) {
+            $itemOk = \App\Models\InventoryItem::where('id', $line['inventory_item_id'] ?? 0)
+                ->where('company_id', $companyId)->where('is_master', true)->exists();
+            if (!$itemOk) {
+                $bad["item_lines.$i.inventory_item_id"] = __('validation.exists', ['attribute' => 'item']);
+            }
+            if (!empty($line['location_id'])
+                && !$this->locationBelongsToCompany($companyId, (int) $line['location_id'])) {
+                $bad["item_lines.$i.location_id"] = __('validation.exists', ['attribute' => 'location']);
+            }
+        }
+
+        if ($bad) {
+            throw \Illuminate\Validation\ValidationException::withMessages($bad);
+        }
+    }
+
+    private function assertLocationBelongsToCompany(int $companyId, int $locationId, string $key): void
+    {
+        if (!$this->locationBelongsToCompany($companyId, $locationId)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                $key => __('validation.exists', ['attribute' => 'location']),
+            ]);
+        }
+    }
+
+    private function locationBelongsToCompany(int $companyId, int $locationId): bool
+    {
+        return DB::table('inventory_locations as il')
+            ->leftJoin('farms as f', 'f.id', '=', 'il.farm_id')
+            ->where('il.id', $locationId)
+            ->where(function ($q) use ($companyId) {
+                $q->where('il.company_id', $companyId)->orWhere('f.company_id', $companyId);
+            })->exists();
+    }
+
     /**
      * Sync item lines for an inventory PO.
      * Only deletes open lines — received/force_closed lines are immutable.
      * 📌 METHODOLOGY REFERENCE: InventoryPurchaseOrderLifecycle (#45)
      */
+    /**
+     * QA-026 — purchase-order totals, calculated on the server (estimates, in cents, rounded half-up):
+     *   inventory PO : subtotal = Σ (quantity ordered × estimated unit cost) over the item lines
+     *   cattle PO    : subtotal = max head × estimated average weight (kg) × estimated price per kg
+     *   total_amount = subtotal + freight + other costs
+     * @return array{subtotal: string, total_amount: string}
+     */
+    private function computePoTotals(string $poType, array $validated, array $itemLines): array
+    {
+        $round = fn ($v) => \App\Support\Money::round((string) ($v === null || $v === '' ? 0 : $v), 2);
+
+        if ($poType === 'inventory') {
+            $subtotal = '0.00';
+            foreach ($itemLines as $line) {
+                $qty  = (string) ($line['qty_ordered'] ?? 0);
+                $cost = (string) ($line['unit_cost_estimated'] ?? 0);
+                $subtotal = bcadd($subtotal, \App\Support\Money::round(bcmul($qty, $cost, 6), 2), 2);
+            }
+        } else {
+            $heads  = (string) ($validated['max_head'] ?? 0);
+            $weight = (string) ($validated['estimated_avg_weight_kg'] ?? 0);
+            $price  = (string) ($validated['estimated_price_per_kg'] ?? 0);
+            $subtotal = \App\Support\Money::round(bcmul(bcmul($heads, $weight, 6), $price, 6), 2);
+        }
+
+        $total = bcadd(bcadd($subtotal, $round($validated['freight_cost'] ?? 0), 2), $round($validated['other_costs'] ?? 0), 2);
+
+        return ['subtotal' => $subtotal, 'total_amount' => $total];
+    }
+
     private function syncItemLines(ProcurementRecord $record, array $lines): void
     {
         $record->itemLines()->where('line_status', 'open')->delete();
@@ -1256,7 +1356,8 @@ class ProcurementController extends Controller
         foreach ($lines as $line) {
             $qtyOrdered        = (string) ($line['qty_ordered'] ?? 0);
             $unitCostEstimated = (string) ($line['unit_cost_estimated'] ?? 0);
-            $totalEstimated    = bcmul($qtyOrdered, $unitCostEstimated, 2);
+            // QA-026: round to cents (bcmul alone cuts the extra decimals)
+            $totalEstimated    = \App\Support\Money::round(bcmul($qtyOrdered, $unitCostEstimated, 6), 2);
 
             ProcurementItemLine::create([
                 'procurement_id'      => $record->id,

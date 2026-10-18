@@ -76,6 +76,8 @@ class BreedingController extends Controller
             ? Animal::find($validated['dam_id'])->company_id
             : $authUser->company_id;
 
+        $validated = $this->checkParents($validated);
+
         // Expected calving date = breeding date + 283 days
         // Full methodology in BreedingService::calculateExpectedCalvingDate
         $validated['expected_calving_date'] = \Carbon\Carbon::parse($validated['breeding_date'])
@@ -101,6 +103,7 @@ class BreedingController extends Controller
         $this->authorizeAnimal($authUser, $breedingRecord->dam_id);
 
         $validated = $this->validateRecord($request, $breedingRecord->id);
+        $validated = $this->checkParents($validated);
 
         if (isset($validated['breeding_date'])) {
             $validated['expected_calving_date'] = \Carbon\Carbon::parse($validated['breeding_date'])
@@ -131,6 +134,35 @@ class BreedingController extends Controller
     }
 
     // ── Private helpers ───────────────────────────────────────────
+    /**
+     * The dam must be a female and the sire a male, both of the dam's company.
+     * The farm is taken from the dam, never from the form.
+     */
+    private function checkParents(array $validated): array
+    {
+        $dam = Animal::findOrFail($validated['dam_id']);
+
+        if ($dam->sex !== 'female') {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'dam_id' => __('messages.dam_must_be_female'),
+            ]);
+        }
+
+        if (!empty($validated['sire_id'])) {
+            $sire = Animal::findOrFail($validated['sire_id']);
+
+            if ($sire->sex !== 'male' || (int) $sire->company_id !== (int) $dam->company_id) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'sire_id' => __('messages.sire_must_be_male'),
+                ]);
+            }
+        }
+
+        $validated['farm_id'] = $dam->farm_id;
+
+        return $validated;
+    }
+
     private function validateRecord(Request $request, ?int $ignoreId = null): array
     {
         return $request->validate([
@@ -167,7 +199,7 @@ class BreedingController extends Controller
             'confirmation_date'     => $record->confirmation_date?->toDateString(),
             'notes'                 => $record->notes,
             'days_until_calving'    => $record->expected_calving_date
-                ? max(0, now()->diffInDays($record->expected_calving_date, false))
+                ? max(0, (int) now()->diffInDays($record->expected_calving_date, false))
                 : null,
             'created_at'            => $record->created_at?->format('d M Y'),
         ];
@@ -185,6 +217,6 @@ class BreedingController extends Controller
     {
         if ($authUser->is_super_admin) return;
         $animal = Animal::findOrFail($animalId);
-        abort_unless($animal->company_id === $authUser->company_id, 403);
+        abort_unless((int) $animal->company_id === (int) $authUser->company_id, 403);
     }
 }

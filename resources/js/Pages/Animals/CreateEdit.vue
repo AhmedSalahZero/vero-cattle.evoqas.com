@@ -37,7 +37,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useForm, Link, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 
 const props = defineProps({
 	animal: { type: Object, default: null },
@@ -375,7 +375,7 @@ function buildAutoTagPrefix() {
 	const co3 = sanitizeCodePart(farm?.company_id ? `CO${farm.company_id}` : '', 'CO')
 	const fm3 = sanitizeCodePart(farm?.name_en || farm?.name_ar, 'FM')
 
-	const dateValue = bulk.value.purchase_date || props.po?.date || new Date().toISOString().slice(0, 10)
+	const dateValue = bulk.value.purchase_date || props.po?.date || localToday()
 	const dateObj = new Date(dateValue)
 	const year = Number.isNaN(dateObj.getTime()) ? String(new Date().getFullYear()) : String(dateObj.getFullYear())
 	const month = Number.isNaN(dateObj.getTime())

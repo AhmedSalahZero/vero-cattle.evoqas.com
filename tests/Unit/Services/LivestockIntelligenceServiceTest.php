@@ -362,7 +362,7 @@ class LivestockIntelligenceServiceTest extends TestCase
         $grossMargin = '-5000.00'; // loss (cost with no sale)
 
         $grossMarginPct = (bccomp($revenue, '0', 4) > 0)
-            ? (float) bcadd(bcdiv(bcmul($grossMargin, '100', 6), $revenue, 6), '0', 2)
+            ? (float) \App\Support\Money::round(bcdiv(bcmul($grossMargin, '100', 6), $revenue, 6), 2)
             : null;
 
         $this->assertNull($grossMarginPct, 'gross_margin_pct must be null when revenue = 0');
@@ -376,7 +376,7 @@ class LivestockIntelligenceServiceTest extends TestCase
         $pricePerKgDw = '0';
 
         $breakEven = (bccomp($pricePerKgDw, '0', 4) > 0)
-            ? (float) bcadd(bcdiv($totalCogs, $pricePerKgDw, 6), '0', 2)
+            ? (float) \App\Support\Money::round(bcdiv($totalCogs, $pricePerKgDw, 6), 2)
             : null;
 
         $this->assertNull($breakEven, 'break_even_kg_dw must be null when price_per_kg = 0');
@@ -390,7 +390,7 @@ class LivestockIntelligenceServiceTest extends TestCase
         $totalCogs    = '15000.0000';
         $pricePerKgDw = '60.0000';
 
-        $breakEven = (float) bcadd(bcdiv($totalCogs, $pricePerKgDw, 6), '0', 2);
+        $breakEven = (float) \App\Support\Money::round(bcdiv($totalCogs, $pricePerKgDw, 6), 2);
 
         $this->assertEquals(250.00, $breakEven);
     }
@@ -405,11 +405,7 @@ class LivestockIntelligenceServiceTest extends TestCase
 
         $this->assertEquals('5000.0000', $grossMargin);
 
-        $gmPct = (float) bcadd(
-            bcdiv(bcmul($grossMargin, '100', 6), $revenue, 6),
-            '0',
-            2
-        );
+        $gmPct = (float) \App\Support\Money::round(bcdiv(bcmul($grossMargin, '100', 6), $revenue, 6), 2);
 
         $this->assertEquals(25.00, $gmPct);
     }
@@ -425,11 +421,7 @@ class LivestockIntelligenceServiceTest extends TestCase
 
         $this->assertEquals('-2000.0000', $grossMargin);
 
-        $gmPct = (float) bcadd(
-            bcdiv(bcmul($grossMargin, '100', 6), $revenue, 6),
-            '0',
-            2
-        );
+        $gmPct = (float) \App\Support\Money::round(bcdiv(bcmul($grossMargin, '100', 6), $revenue, 6), 2);
 
         $this->assertEquals(-20.00, $gmPct);
     }
@@ -507,11 +499,7 @@ class LivestockIntelligenceServiceTest extends TestCase
         $cogs    = '80000.0000';
 
         $grossMargin = bcsub($revenue, $cogs, 4);
-        $roi         = (float) bcadd(
-            bcdiv(bcmul($grossMargin, '100', 6), $cogs, 6),
-            '0',
-            2
-        );
+        $roi         = (float) \App\Support\Money::round(bcdiv(bcmul($grossMargin, '100', 6), $cogs, 6), 2);
 
         $this->assertEquals('20000.0000', $grossMargin);
         $this->assertEquals(25.00, $roi);
@@ -525,11 +513,7 @@ class LivestockIntelligenceServiceTest extends TestCase
         $cogs    = '80000.0000';
 
         $grossMargin = bcsub($revenue, $cogs, 4);
-        $roi         = (float) bcadd(
-            bcdiv(bcmul($grossMargin, '100', 6), $cogs, 6),
-            '0',
-            2
-        );
+        $roi         = (float) \App\Support\Money::round(bcdiv(bcmul($grossMargin, '100', 6), $cogs, 6), 2);
 
         $this->assertEquals(-12.50, $roi);
     }
@@ -542,11 +526,7 @@ class LivestockIntelligenceServiceTest extends TestCase
         $cogs    = '0.0000';
 
         $roi = (bccomp($cogs, '0', 4) > 0)
-            ? (float) bcadd(
-                bcdiv(bcmul(bcsub($revenue, $cogs, 4), '100', 6), $cogs, 6),
-                '0',
-                2
-            )
+            ? (float) \App\Support\Money::round(bcdiv(bcmul(bcsub($revenue, $cogs, 4), '100', 6), $cogs, 6), 2)
             : null;
 
         $this->assertNull($roi, 'ROI must be null when COGS = 0 to avoid division by zero');

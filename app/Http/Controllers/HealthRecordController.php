@@ -203,6 +203,9 @@ class HealthRecordController extends Controller
             'farm_id'             => 'required|exists:farms,id',
             'lot_id'              => 'nullable|exists:lots,id',
             'inventory_item_id'   => 'required|exists:inventory_items,id',
+            // The stock room the medicine is taken from. Without this rule Laravel
+            // dropped the field and the service crashed on a missing location_id.
+            'location_id'         => 'required|exists:inventory_locations,id',
             'type'                => ['required', Rule::in(['treatment','vet_visit','surgery','other'])],
             'date'                => 'required|date',
             'condition'           => 'nullable|string|max:255',
@@ -315,7 +318,7 @@ class HealthRecordController extends Controller
     {
         if ($authUser->is_super_admin) return;
         $animal = Animal::findOrFail($animalId);
-        abort_unless($animal->company_id === $authUser->company_id, 403);
+        abort_unless((int) $animal->company_id === (int) $authUser->company_id, 403);
     }
 
  

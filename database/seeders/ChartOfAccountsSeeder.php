@@ -95,6 +95,9 @@ class ChartOfAccountsSeeder extends Seeder
     {
         // Idempotent — do nothing if this company already has accounts
         if (Account::where('company_id', $companyId)->exists()) {
+            // Base chart already there — still make sure the labor &
+            // overhead accounts (Methodology #48) exist. Idempotent.
+            $this->seedNewAccountsForCompany($companyId);
             return;
         }
 
@@ -122,6 +125,10 @@ class ChartOfAccountsSeeder extends Seeder
 
             $idMap[$entry['code']] = $account->id;
         }
+
+        // Labor & overhead accounts (2260, 2270-2273, 6310, 6320-6323)
+        // belong to every company's standard chart (Methodology #48).
+        $this->seedNewAccountsForCompany($companyId);
     }
 
     /**
@@ -219,6 +226,12 @@ class ChartOfAccountsSeeder extends Seeder
                 'code' => '1350', 'parent_code' => '1300',
                 'name_en' => 'Other Inventory', 'name_ar' => 'مخزون أخرى',
                 'type' => 'asset', 'normal_balance' => 'debit', 'posting' => true,
+            ],
+            [
+                'code' => '1360', 'parent_code' => '1300',
+                'name_en' => 'Feed Mixing WIP', 'name_ar' => 'تصنيع الأعلاف قيد التشغيل',
+                'type' => 'asset', 'normal_balance' => 'debit', 'posting' => true,
+                'notes' => 'Ingredient cost of feed batches being mixed. Cleared to Feed Inventory (1320) when the batch is finished.',
             ],
 
             // Repeater group headers — user adds sub-accounts via UI

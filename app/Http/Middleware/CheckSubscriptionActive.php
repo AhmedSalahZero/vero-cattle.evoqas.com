@@ -21,7 +21,18 @@ class CheckSubscriptionActive
             return $next($request);
         }
 
+        // A deactivated user, or a deactivated / missing company, is shut out at once —
+        // even with a session that was opened before the switch-off.
         $company = Company::find($user->company_id);
+
+        if ($user->is_active === false || ($company && !$company->is_active)) {
+            Auth::guard('web')->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return redirect()->route('login')
+                ->withErrors(['email' => 'هذا الحساب غير مفعّل / This account is deactivated.']);
+        }
 
         if ($this->sub->isExpired($company)) {
             Auth::guard('web')->logout();

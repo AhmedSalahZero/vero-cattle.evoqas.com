@@ -19,10 +19,10 @@
  *   Farm names resolved via n(farm, 'name').
  *   Arabic mode → ALL words in Arabic.
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useForm, usePage, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
 defineOptions({ layout: AuthenticatedLayout })
@@ -64,16 +64,29 @@ function applyFilters() {
 
 watch([filterFarm, filterStatus, filterDueSoon], applyFilters)
 
+// QA-067: expected calving = breeding date + 283 days, by pure calendar arithmetic (the same result as the
+// server). The old code mixed UTC and local time, so for winter breeding dates (clock change in between)
+// the preview showed one day EARLIER than the date the server saves.
+function expectedCalving(dateStr) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateStr || ''))
+    if (!m) return '—'
+    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + 283))
+    return d.toISOString().slice(0, 10)
+}
+function dayNumber(dateStr) {
+    const [y, mo, d] = String(dateStr).slice(0, 10).split('-').map(Number)
+    return Math.round(Date.UTC(y, mo - 1, d) / 86400000)
+}
 // ── Stats chips ───────────────────────────────────────────────────
 const totalRecords   = computed(() => props.records?.meta?.total ?? props.records?.data?.length ?? 0)
 const confirmedCount = computed(() => props.records?.data?.filter(r => r.pregnancy_status === 'confirmed').length ?? 0)
 const dueSoonCount   = computed(() => {
-    const today = new Date()
-    const limit = new Date(today); limit.setDate(limit.getDate() + 30)
+    // QA-067: whole calendar days (today counts as "due soon")
+    const today = dayNumber(localToday())
     return props.records?.data?.filter(r => {
         if (!r.expected_calving_date || r.pregnancy_status !== 'confirmed') return false
-        const d = new Date(r.expected_calving_date)
-        return d >= today && d <= limit
+        const diff = dayNumber(r.expected_calving_date) - today
+        return diff >= 0 && diff <= 30
     }).length ?? 0
 })
 
@@ -127,14 +140,21 @@ const editRecord  = ref(null)
 const damOptions  = ref([])
 const sireOptions = ref([])
 
+// QA-065: mother list = females, father list = males, each loaded on its own. Before, the father list was
+// copied from the mother list BEFORE it had finished loading, so in Edit the father box had no options.
+// The newest answer wins when the farm is changed quickly.
+let loadReq = { dam: 0, sire: 0 }
 async function loadAnimals(farmId, sex, target) {
+    const key = sex === 'male' ? 'sire' : 'dam'
+    const myReq = ++loadReq[key]
     if (!farmId) { target.value = []; return }
     try {
         const res = await fetch(`/api/lots-animals?farm_id=${farmId}&status=active`)
         const data = await res.json()
-        if (sex === 'female') target.value = data.filter(a => a.sex === 'female' || a.sex === 'castrated' ? false : a.sex === 'female')
-        target.value = data
+        if (myReq !== loadReq[key]) return
+        target.value = data.filter(a => a.sex === sex)
     } catch {
+        if (myReq !== loadReq[key]) return
         target.value = []
     }
 }
@@ -159,7 +179,9 @@ function openCreate() {
     panelOpen.value  = true
 }
 
+let suppressCascade = false
 function openEdit(record) {
+    suppressCascade = true
     form.farm_id           = record.farm_id ?? ''
     form.dam_id            = record.dam_id  ?? ''
     form.sire_id           = record.sire_id ?? ''
@@ -172,8 +194,10 @@ function openEdit(record) {
     editRecord.value = record
     panelMode.value  = 'edit'
     panelOpen.value  = true
-    loadAnimals(record.farm_id, 'all', damOptions)
-    sireOptions.value = damOptions.value
+    loadAnimals(record.farm_id, 'female', damOptions)
+    loadAnimals(record.farm_id, 'male', sireOptions)
+    // QA-066: the farm watcher below must not wipe the mother and father while an existing record is loaded
+    nextTick(() => { suppressCascade = false })
 }
 
 function closePanel() {
@@ -182,11 +206,11 @@ function closePanel() {
 }
 
 watch(() => form.farm_id, (fid) => {
+    if (suppressCascade) return
     form.dam_id  = ''
     form.sire_id = ''
-    loadAnimals(fid, 'all', damOptions)
-    sireOptions.value = []
-    loadAnimals(fid, 'all', sireOptions)
+    loadAnimals(fid, 'female', damOptions)
+    loadAnimals(fid, 'male', sireOptions)
 })
 
 function submitForm() {
@@ -552,7 +576,7 @@ function farmName(farmId) {
                                     <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                                 </svg>
                                 {{ lang === 'ar' ? 'الولادة المتوقعة:' : 'Expected calving:' }}
-                                {{ (() => { try { const d = new Date(form.breeding_date); d.setDate(d.getDate()+283); return d.toISOString().split('T')[0] } catch { return '—' } })() }}
+                                {{ expectedCalving(form.breeding_date) }}
                             </div>
                         </div>
 

@@ -76,13 +76,13 @@ class LivestockReceiptServiceTest extends TestCase
             'company_id' => $company->id,
             'code'       => '1310',
             'type'       => 'asset',
-            'is_posting' => true,
+            'allow_direct_posting' => true,
         ]);
         Account::factory()->create([
             'company_id' => $company->id,
             'code'       => '2230',
             'type'       => 'liability',
-            'is_posting' => true,
+            'allow_direct_posting' => true,
         ]);
 
         // Seed an open fiscal year covering the receipt date
@@ -355,8 +355,10 @@ class LivestockReceiptServiceTest extends TestCase
     {
         // Pre-create an animal with TAG-001 to force a unique violation
         // on the second receipt attempt
+        // (animals are unique per farm + tag, so the duplicate must be on the PO's farm)
         Animal::factory()->create([
             'company_id' => $this->po->company_id,
+            'farm_id'    => $this->po->farm_id,
             'tag'        => 'TAG-DUPE',
         ]);
 
@@ -487,7 +489,7 @@ class LivestockReceiptServiceTest extends TestCase
         ];
     }
 
-    private function batchMeta(string $date = null): array
+    private function batchMeta(?string $date = null): array
     {
         return [
             'date'               => $date ?? $this->receiptDate,

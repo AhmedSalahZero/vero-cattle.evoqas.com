@@ -113,7 +113,13 @@ class AnimalController extends Controller
                 ->store('photos/animals', 'public');
         }
 
-        Animal::create($validated);
+        $animal = Animal::create($validated);
+
+        // Start the lot history (animal-days for cost allocation)
+        app(\App\Services\AnimalLotHistoryService::class)->open(
+            $animal,
+            ($animal->dob?->toDateString()) ?: now()->toDateString()
+        );
 
         return redirect()->route('animals.index')
             ->with('success', __('messages.animal_created'));
@@ -253,6 +259,35 @@ class AnimalController extends Controller
             foreach (array_chunk($rows, 200) as $chunk) {
                 DB::table('animals')->insert($chunk);
             }
+
+            // Start the lot history for every animal just inserted that sits in a lot
+            // and is still on the farm (animal-days for cost allocation).
+            $historyRows = [];
+            foreach (array_chunk($rows, 200) as $chunk) {
+                $created = DB::table('animals')
+                    ->where('company_id', $companyId)
+                    ->whereIn('tag', array_column($chunk, 'tag'))
+                    ->get(['id', 'tag', 'lot_id', 'farm_id', 'company_id', 'status', 'purchase_date', 'dob'])
+                    ->keyBy('tag');
+                foreach ($chunk as $r) {
+                    $a = $created[$r['tag']] ?? null;
+                    if (! $a || ! $a->lot_id || in_array($a->status, ['sold', 'slaughtered', 'dead'], true)) {
+                        continue;
+                    }
+                    $historyRows[] = [
+                        'animal_id'  => $a->id,
+                        'lot_id'     => $a->lot_id,
+                        'farm_id'    => $a->farm_id,
+                        'company_id' => $a->company_id,
+                        'entered_at' => $a->purchase_date ?: ($a->dob ?: now()->toDateString()),
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
+                }
+            }
+            foreach (array_chunk($historyRows, 200) as $chunk) {
+                DB::table('animal_lot_history')->insert($chunk);
+            }
         });
 
         $count = count($animals);
@@ -335,7 +370,12 @@ class AnimalController extends Controller
                 ->store('photos/animals', 'public');
         }
 
+        $oldLotId  = $animal->lot_id;
+        $oldStatus = (string) $animal->status;
+
         $animal->update($validated);
+
+        app(\App\Services\AnimalLotHistoryService::class)->syncAfterEdit($animal->fresh(), $oldLotId, $oldStatus);
 
         return redirect()->route('animals.show', $animal->id)
             ->with('success', __('messages.animal_updated'));
@@ -390,7 +430,11 @@ class AnimalController extends Controller
             $query->where('company_id', $authUser->company_id);
         }
 
+        $movedIds = (clone $query)->pluck('id')->all();
+
         $query->update(['lot_id' => $lot->id]);
+
+        app(\App\Services\AnimalLotHistoryService::class)->move($movedIds, (int) $lot->id, now()->toDateString());
 
         return back()->with('success', __('messages.animals_assigned'));
     }

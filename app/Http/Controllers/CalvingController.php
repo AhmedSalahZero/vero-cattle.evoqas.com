@@ -72,11 +72,14 @@ class CalvingController extends Controller
             ? Animal::find($validated['dam_id'])->company_id
             : $authUser->company_id;
 
+        $validated = $this->checkLinks($validated);
+
         $record = CalvingRecord::create([...$validated, 'company_id' => $companyId]);
 
         // Update breeding record status to calved
         if (!empty($validated['breeding_record_id'])) {
             BreedingRecord::where('id', $validated['breeding_record_id'])
+                ->where('company_id', $companyId)
                 ->update(['pregnancy_status' => 'calved']);
         }
 
@@ -97,7 +100,22 @@ class CalvingController extends Controller
         $this->authorizeAnimal($authUser, $calvingRecord->dam_id);
 
         $validated = $this->validateRecord($request, $calvingRecord->id);
+        $validated = $this->checkLinks($validated);
+
+        $oldBreedingId = $calvingRecord->breeding_record_id;
         $calvingRecord->update($validated);
+
+        // QA-063: keep the breeding records in step when the calving is linked to a different breeding
+        if ((int) $oldBreedingId !== (int) ($validated['breeding_record_id'] ?? 0)) {
+            if ($oldBreedingId) {
+                $this->releaseBreeding((int) $oldBreedingId, $calvingRecord->id);
+            }
+            if (!empty($validated['breeding_record_id'])) {
+                BreedingRecord::where('id', $validated['breeding_record_id'])
+                    ->where('company_id', $calvingRecord->company_id)
+                    ->update(['pregnancy_status' => 'calved']);
+            }
+        }
 
         return back()->with('success', __('messages.calving_updated'));
     }
@@ -114,17 +132,93 @@ class CalvingController extends Controller
         );
 
         $this->authorizeAnimal($authUser, $calvingRecord->dam_id);
+
+        $breedingId = $calvingRecord->breeding_record_id;
         $calvingRecord->delete();
+
+        // QA-063: the breeding record was closed as "calved" by this calving — reopen it
+        if ($breedingId) {
+            $this->releaseBreeding((int) $breedingId, $calvingRecord->id);
+        }
 
         return back()->with('success', __('messages.calving_deleted'));
     }
 
     // ── Private helpers ───────────────────────────────────────────
+    /**
+     * The breeding record and the calf must belong to the dam's company (and the
+     * breeding record to this dam); the farm is taken from the dam.
+     */
+    /**
+     * QA-063 — when no other calving points at a breeding record any more, a record that was closed as
+     * "calved" goes back to "confirmed" (if a confirmation date exists) or "open".
+     */
+    private function releaseBreeding(int $breedingId, int $exceptCalvingId): void
+    {
+        $stillUsed = CalvingRecord::where('breeding_record_id', $breedingId)
+            ->where('id', '!=', $exceptCalvingId)->exists();
+        if ($stillUsed) {
+            return;
+        }
+        $b = BreedingRecord::find($breedingId);
+        if ($b && $b->pregnancy_status === 'calved') {
+            $b->update(['pregnancy_status' => $b->confirmation_date ? 'confirmed' : 'open']);
+        }
+    }
+
+    private function checkLinks(array $validated): array
+    {
+        $dam = Animal::findOrFail($validated['dam_id']);
+
+        // QA-064: the mother must be a female (Breeding already enforces this for its dam)
+        if ($dam->sex !== 'female') {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'dam_id' => __('messages.dam_must_be_female'),
+            ]);
+        }
+
+        if (!empty($validated['breeding_record_id'])) {
+            $ok = BreedingRecord::where('id', $validated['breeding_record_id'])
+                ->where('company_id', $dam->company_id)
+                ->where('dam_id', $dam->id)
+                ->exists();
+
+            if (!$ok) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'breeding_record_id' => __('validation.exists', ['attribute' => 'breeding record']),
+                ]);
+            }
+
+            // QA-064: a calf cannot be born before the breeding that produced it
+            $breedingDate = BreedingRecord::where('id', $validated['breeding_record_id'])->value('breeding_date');
+            if ($breedingDate && \Carbon\Carbon::parse($validated['calving_date'])->lt(\Carbon\Carbon::parse($breedingDate)->startOfDay())) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'calving_date' => __('The calving date cannot be before the breeding date.'),
+                ]);
+            }
+        }
+
+        if (!empty($validated['calf_id'])) {
+            $calf = Animal::findOrFail($validated['calf_id']);
+
+            if ((int) $calf->company_id !== (int) $dam->company_id || $calf->id === $dam->id) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'calf_id' => __('validation.exists', ['attribute' => 'calf']),
+                ]);
+            }
+        }
+
+        $validated['farm_id'] = $dam->farm_id;
+
+        return $validated;
+    }
+
     private function validateRecord(Request $request, ?int $ignoreId = null): array
     {
         return $request->validate([
             'dam_id'              => 'required|exists:animals,id',
-            'calf_id'             => 'nullable|exists:animals,id',
+            // QA-064: one calf can only be born once
+            'calf_id'             => ['nullable', 'exists:animals,id', Rule::unique('calving_records', 'calf_id')->ignore($ignoreId)],
             'breeding_record_id'  => 'nullable|exists:breeding_records,id',
             'farm_id'             => 'required|exists:farms,id',
             'calving_date'        => 'required|date',
@@ -147,6 +241,9 @@ class CalvingController extends Controller
                 'tag' => $record->dam->tag,
             ] : null,
             'calf_id'          => $record->calf_id,
+            // QA-063: the page needs the link to show it and to send it back unchanged when a record is edited;
+            // without it every edit silently erased the link to the breeding record
+            'breeding_record_id' => $record->breeding_record_id,
             'calf'             => $record->calf ? [
                 'id'  => $record->calf->id,
                 'tag' => $record->calf->tag,
@@ -176,6 +273,6 @@ class CalvingController extends Controller
     {
         if ($authUser->is_super_admin) return;
         $animal = Animal::findOrFail($animalId);
-        abort_unless($animal->company_id === $authUser->company_id, 403);
+        abort_unless((int) $animal->company_id === (int) $authUser->company_id, 403);
     }
 }

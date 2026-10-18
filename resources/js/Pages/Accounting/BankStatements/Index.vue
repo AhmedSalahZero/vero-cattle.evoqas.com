@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { usePage, useForm, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
 defineOptions({ layout: AuthenticatedLayout })
@@ -262,7 +262,7 @@ const lineForm = useForm({
 function openAdd() {
 	editingLine.value = null
 	lineForm.reset()
-	lineForm.date = new Date().toISOString().slice(0, 10)
+	lineForm.date = localToday()
 	showLineModal.value = true
 }
 

@@ -16,11 +16,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 //  Account rows and generates AssetDepreciationLine records
 //  via DepreciationService (Phase 4 / Services layer).
 //
-//  net_book_value is a plain decimal column written explicitly by
-//  the controller on every store() and postPeriod() call:
-//    store()      → net_book_value = purchase_cost  (initial NBV)
-//    postPeriod() → net_book_value = purchase_cost − accumulated_depreciation
-//  It is NOT a MySQL generated column — it must be in $fillable.
+//  net_book_value is a MySQL GENERATED column (purchase_cost − accumulated
+//  depreciation). The database computes it; it must never be written.
 // ══════════════════════════════════════════════════════════════════
 
 class FixedAsset extends Model
@@ -45,7 +42,7 @@ class FixedAsset extends Model
         'useful_life_months',
         'db_rate',
         'accumulated_depreciation',  // updated by controller on each postPeriod()
-        'net_book_value',            // ✅ FA-S2 FIX: written explicitly — NOT a generated column
+        // net_book_value is a MySQL GENERATED column — deliberately NOT fillable
         'asset_account_id',
         'acc_dep_account_id',
         'dep_expense_account_id',

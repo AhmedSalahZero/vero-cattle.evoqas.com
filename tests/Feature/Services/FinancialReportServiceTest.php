@@ -588,6 +588,36 @@ class FinancialReportServiceTest extends TestCase
         $this->assertEquals(8000.00, $reLine['balance']);
     }
 
+    // ── G23b: Profit of an EARLIER year (not closed) still reaches equity ─
+
+    /** @test */
+    public function balance_sheet_carries_prior_year_profit_into_equity_and_balances(): void
+    {
+        $this->makeFiscalYear('2025-01-01', '2025-12-31');
+        $fy2026 = $this->makeFiscalYear('2026-01-01', '2026-12-31');
+
+        $revId  = $this->makeAccount('4100', 'Revenue', 'revenue', 'credit');
+        $cogsId = $this->makeAccount('5100', 'COGS',    'cogs',    'debit');
+        $arId   = $this->makeAccount('1600', 'AR',      'asset',   'debit');
+        $wipId  = $this->makeAccount('1310', 'WIP',     'asset',   'debit');
+
+        // 2025: revenue 20 000, COGS 12 000 → profit 8 000 (never closed)
+        $this->postEntry('2025-06-15', [[$arId, 20000, 0], [$revId, 0, 20000]]);
+        $this->postEntry('2025-06-15', [[$cogsId, 12000, 0], [$wipId, 0, 12000]]);
+        // 2026: revenue 5 000 → profit 5 000
+        $this->postEntry('2026-03-10', [[$arId, 5000, 0], [$revId, 0, 5000]]);
+
+        $result = $this->svc->balanceSheet($this->companyId, '2026-06-30', $fy2026);
+
+        $prior = collect($result['equity'])->firstWhere('code', 'RE_PRIOR');
+        $ytd   = collect($result['equity'])->firstWhere('code', 'RE_YTD');
+        $this->assertNotNull($prior);
+        $this->assertEquals(8000.00, $prior['balance']);
+        $this->assertEquals(5000.00, $ytd['balance']);
+        $this->assertTrue($result['balanced'], 'Balance sheet must balance across year boundaries');
+        $this->assertEquals(13000.00, $result['total_equity']);
+    }
+
     // ── G24: No fiscal year → no synthetic RE_YTD line, no crash ─────────
 
     /** @test */

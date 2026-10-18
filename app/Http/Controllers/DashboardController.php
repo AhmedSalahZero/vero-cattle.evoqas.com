@@ -47,6 +47,14 @@ class DashboardController extends Controller
     {
         $user      = Auth::user();
         $farmId    = $request->filled('farm_id') ? (int) $request->farm_id : null;
+
+        // A Super Admin has no company of their own: until one is entered from the
+        // Companies page there is nothing to show, so send them there instead of an error page.
+        if ($user->is_super_admin && (int) $request->session()->get('selected_company_id', 0) <= 0) {
+            return redirect()->route('companies.index')
+                ->with('warning', 'Please enter a company first (click Enter on a company card).');
+        }
+
         $companyId = $this->resolveCompany($request);
 
         // Full KPI payload — served as initial Inertia props

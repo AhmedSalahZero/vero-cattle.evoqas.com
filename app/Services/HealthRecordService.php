@@ -80,6 +80,15 @@ class HealthRecordService
             // Load master item for name denormalization
             $masterItem = InventoryItem::findOrFail($data['inventory_item_id']);
 
+            // Only medicine items may be used for a treatment (a vaccine or feed
+            // item would silently drain the wrong stock and post to account 1330).
+            if (!$masterItem->is_master || $masterItem->category !== 'medicine'
+                || (int) $masterItem->company_id !== (int) $companyId) {
+                throw ValidationException::withMessages([
+                    'inventory_item_id' => __('validation.health.medicine_not_found'),
+                ]);
+            }
+
             // 📌 Step 2 — Hard block: insufficient stock
             $this->assertSufficientStock($stockRow, $data['dose'], $masterItem);
 
@@ -101,10 +110,7 @@ class HealthRecordService
             // 📌 Step 6 — Auto-calculate cost: WAC × dose (bcmath)
             // Overrides user-submitted cost — WAC is authoritative
             // 📌 BcmathMonetaryPrecision (#39)
-            $cost = (float) bcadd(
-                bcmul($unitCost, (string) $data['dose'], 4),
-                '0', 2
-            );
+            $cost = (float) \App\Support\Money::round(bcmul($unitCost, (string) $data['dose'], 4), 2);
             $data['cost'] = $cost;
 
             // 📌 Step 7 — Persist HealthRecord
@@ -200,6 +206,14 @@ class HealthRecordService
             $oldStock = $oldStockRow ? $locked->get($oldStockRow->id) : null;
             $newStock = $newStockRow ? $locked->get($newStockRow->id) : null;
 
+            $newMaster = InventoryItem::find($newMasterItemId);
+            if (!$newMaster || !$newMaster->is_master || $newMaster->category !== 'medicine'
+                || (int) $newMaster->company_id !== (int) $companyId) {
+                throw ValidationException::withMessages([
+                    'inventory_item_id' => __('validation.health.medicine_not_found'),
+                ]);
+            }
+
             abort_unless($newStock, 422, __('validation.health.medicine_not_found'));
 
             // 📌 Step 2 — Restore old stock
@@ -223,10 +237,7 @@ class HealthRecordService
             $data['medicine_name'] = $newMasterItem->name_en ?? $newMasterItem->name_ar;
 
             // 📌 Step 6 — Recompute cost from new WAC × new dose
-            $newCost = (float) bcadd(
-                bcmul($newUnitCost, (string) $data['dose'], 4),
-                '0', 2
-            );
+            $newCost = (float) \App\Support\Money::round(bcmul($newUnitCost, (string) $data['dose'], 4), 2);
             $data['cost'] = $newCost;
 
             // 📌 Step 7 — Replace InventoryTransaction
@@ -447,7 +458,7 @@ class HealthRecordService
         }
 
         // 📌 BcmathMonetaryPrecision (#39)
-        $amount = (float) bcadd((string) $cost, '0', 2);
+        $amount = (float) \App\Support\Money::round((string) $cost, 2);
         $period = (int) date('n', strtotime($date));
 
         $je = JournalEntry::create([

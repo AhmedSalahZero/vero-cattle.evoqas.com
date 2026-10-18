@@ -15,7 +15,7 @@
 import { ref, computed } from 'vue'
 import { useForm, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 import { usePermissions } from '@/Composables/usePermissions'
 
 defineOptions({ layout: AuthenticatedLayout })
@@ -200,13 +200,13 @@ const buildFormRates = () =>
     })
 
 const form = useForm({
-    rate_date: new Date().toISOString().slice(0, 10),
+    rate_date: localToday(),
     rates:     buildFormRates(),
 })
 
 const openPanel = () => {
     form.reset()
-    form.rate_date = new Date().toISOString().slice(0, 10)
+    form.rate_date = localToday()
     form.rates     = buildFormRates()
     panelOpen.value = true
 }

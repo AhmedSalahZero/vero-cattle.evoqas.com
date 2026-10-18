@@ -8,7 +8,7 @@
 import { ref, computed, watch } from 'vue'
 import { useForm, Link, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 
 const { locale: lang, isRtl, n } = useLocale()
 
@@ -49,7 +49,7 @@ const txForm   = useForm({
     stock_id:    '',
     location_id: '',
     type:        'receipt',
-    date:        new Date().toISOString().slice(0,10),
+    date:        localToday(),
     qty:         '',
     unit_cost:   '',
     supplier_id: '',   // 📌 InventoryReceiptAccrual — set on receipt only
@@ -76,7 +76,7 @@ watch(() => txForm.location_id, (locId) => {
 function openTxModal(poLine = null) {
     txForm.reset()
     txForm.type = 'receipt'
-    txForm.date = new Date().toISOString().slice(0,10)
+    txForm.date = localToday()
     poLineBeingReceived.value = poLine ?? null
 
     if (poLine) {
@@ -126,7 +126,7 @@ function submitTx() {
                         txDateError.value = errors.batch_date
                     } else {
                         const firstError = Object.values(errors)[0]
-                        if (firstError) alert(firstError)
+                        if (firstError && !errors._error) alert(firstError)   // _error is already shown by the red toast
                     }
                 },
                 onFinish: () => { txSubmitting.value = false },
@@ -147,7 +147,7 @@ const trfForm  = useForm({
     source_location_id: '',
     dest_location_id:   '',
     qty:                '',
-    date:               new Date().toISOString().slice(0,10),
+    date:               localToday(),
     notes:              '',
 })
 
@@ -161,7 +161,7 @@ const destLocOptions = computed(() =>
 function openTrfModal() {
     trfForm.reset()
     trfForm.master_item_id = props.item.id
-    trfForm.date = new Date().toISOString().slice(0,10)
+    trfForm.date = localToday()
     trfModal.value = true
 }
 function submitTrf() {
@@ -193,7 +193,7 @@ function confirmReversal() {
     txForm.stock_id    = ls.stock_id
     txForm.location_id = tx.location_id
     txForm.type        = 'adjustment'
-    txForm.date        = new Date().toISOString().slice(0, 10)
+    txForm.date        = localToday()
     // receipt reversal = negative qty; consumption reversal = positive qty
     txForm.qty         = tx.type === 'receipt' ? -Number(tx.qty) : Number(tx.qty)
     txForm.unit_cost   = tx.unit_cost
@@ -259,6 +259,8 @@ const typeConfig = computed(() => ({
     adjustment:   { label: lang.value==='ar'?'تسوية':'Adjustment',     color:'var(--cv-amber)',         sign:'±' },
     transfer_in:  { label: lang.value==='ar'?'تحويل وارد':'Transfer In', color:'var(--cv-blue-text)', sign:'+' },
     transfer_out: { label: lang.value==='ar'?'تحويل صادر':'Transfer Out',color:'var(--cv-text-muted)',sign:'-' },
+    mix_out:      { label: lang.value==='ar'?'صرف للخلط':'Mix Out',        color:'var(--cv-danger-text)',  sign:'-' },
+    mix_in:       { label: lang.value==='ar'?'وارد من الخلط':'Mix In',     color:'var(--cv-green-bright)', sign:'+' },
 }))
 
 function fmt(v) {

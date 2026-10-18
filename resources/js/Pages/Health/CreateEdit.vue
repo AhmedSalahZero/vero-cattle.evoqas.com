@@ -21,7 +21,7 @@
 import { ref, computed, watch } from 'vue'
 import { useForm, Link, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { useLocale } from '@/Composables/useLocale'
+import { useLocale, localToday } from '@/Composables/useLocale'
 
 const { locale: lang, isRtl, n ,today} = useLocale()
 
@@ -46,7 +46,7 @@ const form = useForm({
     animal_id:            props.record?.animal_id             ?? props.preAnimalId ?? '',
     inventory_item_id:    props.record?.inventory_item_id     ?? '',
     type:                 props.record?.type                  ?? 'treatment',
-    date:                 props.record?.date                  ?? new Date().toISOString().slice(0, 10),
+    date:                 props.record?.date                  ?? localToday(),
     condition:            props.record?.condition             ?? '',
     dose:                 props.record?.dose                  ?? '',
     dose_unit:            props.record?.dose_unit             ?? '',
@@ -162,7 +162,9 @@ watch(() => form.dose, () => recalcCost())
 
 // Cost auto-calculation: unit_cost × dose
 // User can override — we track if cost was manually touched
-const costManuallySet = ref(isEdit.value && !!props.record?.cost)
+// QA-021: the server ALWAYS calculates the cost (stock average cost x dose) and ignores a typed cost,
+// so the box is read-only and always follows the dose.
+const costManuallySet = ref(false)
 
 function recalcCost() {
     if (costManuallySet.value) return
@@ -183,11 +185,15 @@ function resetCostOverride() {
 
 // ── Withdrawal date auto-suggest ──────────────────────────────────
 // When type = treatment and date changes → suggest date + 14 days
+// QA-022: the suggestion (treatment date + 14 days) now FOLLOWS the treatment date until the user
+// types a withdrawal date of their own; before it stayed on the first date it was calculated for.
+const withdrawalTouched = ref(isEdit.value)
+function onWithdrawalInput() { withdrawalTouched.value = true }
 watch([() => form.type, () => form.date], () => {
-    if (form.type === 'treatment' && form.date && !isEdit.value && !form.withdrawal_clear_date) {
-        const d = new Date(form.date)
-        d.setDate(d.getDate() + 14)
-        form.withdrawal_clear_date = d.toISOString().slice(0, 10)
+    if (form.type === 'treatment' && form.date && !isEdit.value && !withdrawalTouched.value) {
+        const [y, m, dd] = String(form.date).slice(0, 10).split('-').map(Number)
+        const d = new Date(y, m - 1, dd + 14)
+        form.withdrawal_clear_date = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
     }
     if (form.type !== 'treatment') {
         // Non-treatment: clear withdrawal unless explicitly set in edit
@@ -756,6 +762,7 @@ const t = computed(() => lang.value === 'ar' ? {
                                         step="0.01"
                                         min="0"
                                         class="cv-input"
+                                        readonly
                                         @input="onCostInput"
                                     />
                                     <span v-if="!costManuallySet" class="cv-input-badge">{{ t.autoCost }}</span>
@@ -806,6 +813,7 @@ const t = computed(() => lang.value === 'ar' ? {
                                 <label class="cv-label">{{ t.withdrawal }}</label>
                                 <input
                                     v-model="form.withdrawal_clear_date"
+                                    @input="onWithdrawalInput"
                                     type="date"
                                     class="cv-input"
                                     :class="{ 'cv-input-error': form.errors.withdrawal_clear_date }"

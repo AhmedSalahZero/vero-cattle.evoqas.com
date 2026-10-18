@@ -235,6 +235,6 @@ class RationController extends Controller
     {
         if ($authUser->is_super_admin) return;
         $lot = Lot::with('farm')->findOrFail($lotId);
-        abort_unless($lot->farm->company_id === $authUser->company_id, 403);
+        abort_unless((int) $lot->farm->company_id === (int) $authUser->company_id, 403);
     }
 }

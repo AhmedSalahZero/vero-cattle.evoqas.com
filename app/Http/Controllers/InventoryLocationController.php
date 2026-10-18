@@ -247,7 +247,7 @@ class InventoryLocationController extends Controller
     private function authorizeLocation($authUser, InventoryLocation $location): void
     {
         if ($authUser->is_super_admin) return;
-        abort_unless($location->company_id === $authUser->company_id, 403);
+        abort_unless((int) $location->company_id === (int) $authUser->company_id, 403);
     }
 
 
